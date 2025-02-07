@@ -33,19 +33,6 @@ def get_next_y(y_past,x,coeffs):
     # plt.show()
     return y_big[n:]
 
-def get_next_y(y_past,x,coeffs):
-    n=len(y_past)
-    print("x passed", x)
-    print("y passed", y_past)
-    y_big = np.hstack([y_past,np.zeros(len(x))])
-    print(y_big.shape)
-    print(coeffs.shape)
-    for i in range(len(x)):
-        y_big[i+n] = coeffs@y_big[i:n+i] + x[i]
-    # plt.plot(y_big)
-    # plt.show()
-    return y_big[n:]
-
 # np.random.seed(42)
 f1=0.05
 f2=0.5

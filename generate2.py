@@ -69,6 +69,7 @@ def generate(n, bank,samp_bank_small,start_level,coeffs,osamp_coeffs,krig_ptr,sa
     y = np.empty(n+1)
     for i in range(1,n+1):
         y[i] = recurse(i,bank,samp_bank_small,start_level,coeffs,osamp_coeffs,krig_ptr,samp_ptr)
+        # y[i] = 2+1
     return y
 
 
@@ -147,7 +148,7 @@ for ll in range(nlevels):
 samp_bank_small = np.zeros((samp_bank.shape[0], 2000), dtype='float64')
 samp_bank_small[:,:2*bw] = samp_bank[:,200:200+2*bw].copy()
 print(samp_bank_small.shape)
-yy=np.zeros(2000001,dtype=np.float64)
+# yy=np.zeros(2000001,dtype=np.float64)
 
 # tot=0
 # for i in range(1,2000001):
@@ -155,10 +156,22 @@ yy=np.zeros(2000001,dtype=np.float64)
 #     yy[i] = recurse(i,bank,samp_bank_small,nlevels-1,coeffs,osamp_coeffs,krig_ptr)
 #     t2=time.time()
 #     tot+=(t2-t1)
+generate(200,bank,samp_bank_small,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr)
 t1=time.time()
 yy = generate(2000000,bank,samp_bank_small,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr)
 t2=time.time()
 tot=t2-t1
-print(tot/2000001)
-plt.loglog(np.abs(np.fft.rfft(yy[1:])));plt.title("power spectrum")
-plt.show()
+
+tot2=0
+niter=2000000
+yy = np.empty(niter+1)
+t1=time.time()
+for i in range(1,niter+1):
+    # yy[i] = recurse(i,bank,samp_bank_small,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr)
+    yy[i]=2+1
+t2=time.time()
+tot2+=(t2-t1)
+
+print(tot/niter, tot2/niter)
+# plt.loglog(np.abs(np.fft.rfft(yy[1:])));plt.title("power spectrum")
+# plt.show()
