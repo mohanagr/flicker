@@ -5,7 +5,7 @@ from scipy.special import sici
 import time
 import numba as nb
 import sys
-
+from rocket_fft import c2r
 ##
 # rand bank can be very small - size of filter * 2
 # krig bank can be very big - only need last len(filter) rand for the next million krig
@@ -42,31 +42,43 @@ def get_impulse(x,coeffs):
     return y_big[n:]
 
 @nb.njit()
-def gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size):
-    #len(fir) = krig_bank_size
-    #rand bank is 3x krig size. 2x for next generation, 1x full of zeros
-    # print(hf.shape, rand_bank[level].shape)
-    bank[level,:] = np.fft.irfft(hf*np.fft.rfft(rand_bank[level]))[krig_bank_size:2*krig_bank_size]
-    rand_bank[level, :krig_bank_size] = rand_bank[level, krig_bank_size:2*krig_bank_size]
-    rand_bank[level, krig_bank_size:2*krig_bank_size] = sigma*np.random.randn(krig_bank_size)
+def gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len):
+    #len(fir) = krig_len
+    norm=1/(krig_bank_size + krig_len)
+    noise = sigma*np.random.randn(krig_bank_size + krig_len) #generate bigger
+    # print("noise shape", noise.shape)
+    noise[:krig_len] = rand_bank[level,:] #then replace first krig_len with stored last randn
+    rand_bank[level,:] = noise[-krig_len:] #store the last krig_len noise for next generation
+    # bank[level,:] = np.fft.irfft(hf*np.fft.rfft(noise))[krig_len:]
+    # print("out array shape", bank.shape, "input shape", hf.shape)
+    # np.fft.irfft(hf*np.fft.rfft(noise),out=bank[level,:]) # rocket fft doesn't support out kwarg
+    c2r(hf*np.fft.rfft(noise),bank[level,:],np.asarray([0,],dtype='int64'),False,norm,16)
+@nb.njit(parallel=True)
+def copy_arr(x,y):
+    nn=len(x)
+    for i in nb.prange(nn):
+        y[i] = x[i]
 
 @nb.njit()
-def recurse(i,bank,samp_bank,rand_bank,level,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size):
+def recurse(i,bank,samp_bank,rand_bank,level,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len):
     # print("rec", i, "level", level)
     # global bw
     # global krig_len
     # global krig_bank_size
     # global samp_bank_size
     upper=2*bw
+    norm=1/(krig_bank_size + krig_len)
     rownum = i%10 - 1 #row 0 is 0.1
-    retval = bank[level,krig_ptr[level]]
+    retval = bank[level,krig_len+krig_ptr[level]]
     krig_ptr[level] +=1
     if krig_ptr[level] == krig_bank_size:
         #used up all the krig'd values. generate next chunk
-        # gen_krig(bank, rand_bank, level, hf, sigma)
-        bank[level,:] = np.fft.irfft(hf*np.fft.rfft(rand_bank[level]))[krig_bank_size:2*krig_bank_size]
-        rand_bank[level, :krig_bank_size] = rand_bank[level, krig_bank_size:2*krig_bank_size]
-        rand_bank[level, krig_bank_size:2*krig_bank_size] = sigma*np.random.randn(krig_bank_size)
+        noise = sigma*np.random.randn(krig_bank_size + krig_len) #generate bigger
+        noise[:krig_len] = rand_bank[level,:] #then replace first krig_len with stored last randn
+        rand_bank[level,:] = noise[-krig_len:] #store the last krig_len noise for next generation
+        # temp = np.fft.irfft(hf*np.fft.rfft(noise))
+        # copy_arr(temp,bank[level,:])
+        c2r(hf*np.fft.rfft(noise),bank[level,:],np.asarray([0,],dtype='int64'),False,norm,16)
         krig_ptr[level] = 0
     if level == 0:
         return retval
@@ -76,20 +88,20 @@ def recurse(i,bank,samp_bank,rand_bank,level,coeffs,osamp_coeffs,krig_ptr,samp_p
         if samp_ptr[level-1] > samp_bank_size - 2*bw:
             samp_bank[level-1,:bw+bw-1] = samp_bank[level-1, 1-bw-bw:]
             samp_ptr[level-1] = 0
-        samp_bank[level-1, samp_ptr[level-1]+bw+bw-1]=recurse(i//10, bank, samp_bank, rand_bank, level-1, coeffs, osamp_coeffs, krig_ptr, samp_ptr, hf, sigma, bw, krig_bank_size, samp_bank_size)
+        samp_bank[level-1, samp_ptr[level-1]+bw+bw-1]=recurse(i//10, bank, samp_bank, rand_bank, level-1, coeffs, osamp_coeffs, krig_ptr, samp_ptr, hf, sigma, bw, krig_bank_size, samp_bank_size, krig_len)
         # samp_bank[level-1, samp_ptr[level-1]+bw+bw-1]=2#recurse(i//10, bank, samp_bank, rand_bank, level-1, coeffs, osamp_coeffs, krig_ptr, samp_ptr, hf, sigma, bw, krig_bank_size, samp_bank_size)
         retval += samp_bank[level-1,samp_ptr[level-1]+bw-1] #center element of next chunk
         return retval
     # for jj in range(upper):
-    #     retval += osamp_coeffs[rownum,jj]*samp_bank[level-1,samp_ptr[level-1]+jj]
+    #     retval += (osamp_coeffs[rownum,jj]*samp_bank[level-1,samp_ptr[level-1]+jj])
     retval += (osamp_coeffs[rownum,:]@samp_bank[level-1,samp_ptr[level-1]:samp_ptr[level-1]+upper])
     return retval
 
 @nb.njit()
-def generate(n, bank,samp_bank_small,rand_bank,start_level,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size):
+def generate(n, bank,samp_bank_small,rand_bank,start_level,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len):
     y = np.empty(n+1)
     for i in range(1,n+1):
-        y[i] = recurse(i,bank,samp_bank_small,rand_bank,start_level,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size)
+        y[i] = recurse(i,bank,samp_bank_small,rand_bank,start_level,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
     return y
 
 @nb.njit()
@@ -110,12 +122,13 @@ ps[int(f1*N):int(f2*N)+1]=1/np.arange(int(f1*N),int(f2*N)+1) #N/2 is the scaling
 # acf_dft=N*np.fft.irfft(ps)
 # acf_anl=get_acf(np.arange(0,N//2+1),f1,f2)
 
-krig_len = 2000
-krig_bank_size = 8192
-acf_anl=get_acf(np.arange(0,krig_len),f1,f2)
+coeff_len = 2048
+krig_len = 512
+krig_bank_size = 512*7
+acf_anl=get_acf(np.arange(0,coeff_len),f1,f2)
 C=toeplitz(acf_anl)
 Cinv=np.linalg.inv(C)
-vec=get_acf(np.arange(0,krig_len)+1,f1,f2)
+vec=get_acf(np.arange(0,coeff_len)+1,f1,f2)
 vec=vec[::-1]
 coeffs=vec.T@Cinv
 sigma = np.sqrt(C[0,0]-vec@Cinv@vec.T)
@@ -123,21 +136,24 @@ print(sigma)
 
 nlevels=10
 
-bank=np.zeros((nlevels,krig_bank_size),dtype='float64')
-rand_bank = np.zeros((nlevels,3*krig_bank_size),dtype='float64')
-rand_bank[:,:2*krig_bank_size] = sigma*np.random.randn(nlevels*2*krig_bank_size).reshape(nlevels,2*krig_bank_size)
+bank=np.zeros((nlevels,krig_len+krig_bank_size),dtype='float64')
+rand_bank = np.zeros((nlevels,krig_len),dtype='float64') #only gotta store the last krig_len rand 
+rand_bank[:, :] = sigma*np.random.randn(nlevels*krig_len).reshape(nlevels,krig_len)
 
-delta = np.zeros(krig_bank_size) # as long as we want our usable bank of krig to be
+delta = np.zeros(krig_len) # as long as we want our usable bank of krig to be
 delta[0]=1
 fir = get_impulse(delta,coeffs) #size of krig coeffs can be different, don't matter.
 # plt.plot(fir)
+# plt.show()
+# sys.exit(0)
+# print("firt shape", fir.shape)
 # plt.title("impulse response")
 # plt.show()
-hf = np.fft.rfft(np.hstack([fir,np.zeros(2*krig_bank_size)]))
-
+hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size)]))
+# print(hf.shape)
 #burn in the krig_bank
 for level in range(nlevels):
-    gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size)
+    gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len)
 
 # plt.loglog(np.abs(np.fft.rfft(bank[0])));
 # plt.loglog(np.abs(np.fft.rfft(bank[1])));
@@ -157,7 +173,6 @@ osamp_coeffs = np.zeros((len(t_n_diff), len(taus)),dtype='float64')
 for i,dd in enumerate(t_n_diff):
     # print("saving coeffs for", dd)
     osamp_coeffs[i,:] = np.sinc(dd-taus)
-print(osamp_coeffs.shape)
 krig_ptr = np.zeros(nlevels,dtype='int64')
 samp_ptr = np.zeros(nlevels,dtype='int64')
 #forward generation first to enable later sampling
@@ -173,27 +188,27 @@ for ll in range(1,nlevels):
     for i in range(samp_bank.shape[1]):
         #generate level's own krig - already there!
     #         print("samp bank begin", samp_bank[ll,i])
-        krig_samp_own = bank[level,krig_ptr[ll]]
+        krig_samp_own = bank[level,krig_len+krig_ptr[ll]]
         krig_ptr[ll] +=1
         if krig_ptr[ll] == krig_bank_size:
             #used up all the krig'd values. generate next chunk
             # print("resetting", ll)
-            gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size)
+            gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len)
             krig_ptr[ll] = 0
         samp_bank[ll,i] += krig_samp_own
         if i%10==0:
+            # print("level", ll, "i", i)
             ctr[ll-1]+=1
             samp_bank[ll,i] += samp_bank[ll-1,ctr[ll-1] + bw]
             continue
         rownum = i%10 - 1 #row 0 is 0.1
         samp_bank[ll,i] += (osamp_coeffs[rownum,:]@samp_bank[ll-1,ctr[ll-1]:ctr[ll-1]+2*bw])
-print("pre-algo samp_bank fill counters", ctr)
-print("krig counters")
-print(krig_ptr)
-
-samp_bank_size=256*krig_bank_size
+print("krig counters", krig_ptr)
+print("samp counters", ctr)
+print("krig + len", np.log2(krig_bank_size+krig_len))
+samp_bank_size=krig_bank_size
 samp_bank_small = np.zeros((samp_bank.shape[0], samp_bank_size), dtype='float64')
-samp_bank_small[:,:2*bw] = samp_bank[:,200:200+2*bw].copy()
+samp_bank_small[:,:2*bw] = samp_bank[:,ctr[0]:ctr[0]+2*bw].copy()
 
 tot=0
 # yy=np.empty(2000001,dtype='float64')
@@ -202,9 +217,9 @@ tot=0
 #     yy[i] = recurse(i,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma)
 #     t2=time.time()
 #     tot+=(t2-t1)
-generate(200,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size)
+generate(200,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
 t1=time.time()
-yy = generate(2000000,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size)
+yy = generate(2000000,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len)
 t2=time.time()
 tot=t2-t1
 print(tot/2000001)
@@ -216,12 +231,12 @@ print(tot/2000001)
 
 # yy = generate_rand(2000000,sigma)
 # zz = generate_dot(200,xx,yy,zz)
-# yy = generate_rand(20,sigma)
-# t1=time.time()
-# yy = generate_rand(2000000,sigma)
-# t2=time.time()
-# tot=t2-t1
-# print(tot/2000000)
+yy = generate_rand(20,sigma)
+t1=time.time()
+yy = generate_rand(2000000,sigma)
+t2=time.time()
+tot=t2-t1
+print(tot/2000000)
 
 plt.loglog(np.abs(np.fft.rfft(yy[1:])));plt.title("power spectrum")
 plt.show()
