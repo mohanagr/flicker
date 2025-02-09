@@ -53,61 +53,67 @@ def gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len):
     # print("out array shape", bank.shape, "input shape", hf.shape)
     # np.fft.irfft(hf*np.fft.rfft(noise),out=bank[level,:]) # rocket fft doesn't support out kwarg
     c2r(hf*np.fft.rfft(noise),bank[level,:],np.asarray([0,],dtype='int64'),False,norm,16)
-@nb.njit(parallel=True)
-def copy_arr(x,y):
-    nn=len(x)
-    for i in nb.prange(nn):
-        y[i] = x[i]
 
 @nb.njit()
-def recurse(i,bank,samp_bank,rand_bank,level,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len):
-    # print("rec", i, "level", level)
-    # global bw
-    # global krig_len
-    # global krig_bank_size
-    # global samp_bank_size
-    upper=2*bw
+def generate(n, bank,samp_bank,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len):
+    NUM_STACK = np.zeros(nlevels+1,dtype='int64')
+    LEV_STACK = np.zeros(nlevels+1,dtype='int64')
+    NUM_STACK[0]=1
+    LEV_STACK[0]=nlevels-1
+    y=np.zeros(n+1,dtype='float64')
+    NUM_PTR=0
     norm=1/(krig_bank_size + krig_len)
-    rownum = i%10 - 1 #row 0 is 0.1
-    retval = bank[level,krig_len+krig_ptr[level]]
-    krig_ptr[level] +=1
-    if krig_ptr[level] == krig_bank_size:
-        #used up all the krig'd values. generate next chunk
-        noise = sigma*np.random.randn(krig_bank_size + krig_len) #generate bigger
-        noise[:krig_len] = rand_bank[level,:] #then replace first krig_len with stored last randn
-        rand_bank[level,:] = noise[-krig_len:] #store the last krig_len noise for next generation
-        # temp = np.fft.irfft(hf*np.fft.rfft(noise))
-        # copy_arr(temp,bank[level,:])
-        c2r(hf*np.fft.rfft(noise),bank[level,:],np.asarray([0,],dtype='int64'),False,norm,16)
-        krig_ptr[level] = 0
-    if level == 0:
-        return retval
-    if rownum==-1: #this whole block seems to be taking 5e-8
-        # samp_val = recurse(i//10, bank, samp_bank, level-1, coeffs, osamp_coeffs)
-        samp_ptr[level-1] +=1
-        if samp_ptr[level-1] > samp_bank_size - 2*bw:
-            samp_bank[level-1,:bw+bw-1] = samp_bank[level-1, 1-bw-bw:]
-            samp_ptr[level-1] = 0
-        samp_bank[level-1, samp_ptr[level-1]+bw+bw-1]=recurse(i//10, bank, samp_bank, rand_bank, level-1, coeffs, osamp_coeffs, krig_ptr, samp_ptr, hf, sigma, bw, krig_bank_size, samp_bank_size, krig_len)
-        # samp_bank[level-1, samp_ptr[level-1]+bw+bw-1]=2#recurse(i//10, bank, samp_bank, rand_bank, level-1, coeffs, osamp_coeffs, krig_ptr, samp_ptr, hf, sigma, bw, krig_bank_size, samp_bank_size)
-        retval += samp_bank[level-1,samp_ptr[level-1]+bw-1] #center element of next chunk
-        return retval
-    # for jj in range(upper):
-    #     retval += (osamp_coeffs[rownum,jj]*samp_bank[level-1,samp_ptr[level-1]+jj])
-    retval += (osamp_coeffs[rownum,:]@samp_bank[level-1,samp_ptr[level-1]:samp_ptr[level-1]+upper])
-    return retval
+    upper=2*bw
+    while(NUM_PTR>=0):
 
-@nb.njit()
-def generate(n, bank,samp_bank_small,rand_bank,start_level,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len):
-    y = np.empty(n+1)
-    for i in range(1,n+1):
-        y[i] = recurse(i,bank,samp_bank_small,rand_bank,start_level,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
+        curpt=NUM_STACK[NUM_PTR]
+        curll=LEV_STACK[NUM_PTR]
+        NUM_PTR-=1
+        rownum = curpt%10 - 1 #row 0 is 0.1
+        # print("Popped point", curpt, "level", curll, "rownum is", rownum+1)
+        tot = bank[curll,krig_len+krig_ptr[curll]]
+        if curll>0:
+            if rownum == -1: #%10 is zero
+                # bank ptr starts at krig len because first krig_len numbers are trash from circular convolution
+                tot =  tot + samp_bank[curll-1,samp_ptr[curll-1]+bw-1]
+            else:
+                tot = tot + osamp_coeffs[rownum,:]@samp_bank[curll-1,samp_ptr[curll-1]:samp_ptr[curll-1]+upper]
+                # print("tot is", tot)
+            if curll==nlevels-1:
+                y[curpt]+=tot
+                NUM_PTR+=1;NUM_STACK[NUM_PTR]=curpt+1;LEV_STACK[NUM_PTR]=nlevels-1
+                futpt=curpt+1
+                if futpt==n+1: break
+                for ii in range(nlevels-1):
+                    rem=futpt%10
+                    quo=futpt//10
+                    if rem>0: break
+                    else:
+                        futpt=quo
+                        NUM_PTR+=1
+                        NUM_STACK[NUM_PTR]=quo #20 is 2 for level previous to it
+                        LEV_STACK[NUM_PTR]=nlevels-2-ii
+        
+        samp_ptr[curll] +=1
+        if samp_ptr[curll] > samp_bank_size - 2*bw: #for bottommost level samp_ptr should never move
+            samp_bank[curll,:bw+bw-1] = samp_bank[curll, 1-bw-bw:]
+            samp_ptr[curll] = 0
+        samp_bank[curll, samp_ptr[curll]+bw+bw-1] = tot #next element after 2bw-1 is 2 bw but we moved sampt ptr
+
+        #handle bank rotations
+        krig_ptr[curll] +=1
+        if krig_ptr[curll] == krig_bank_size:
+            #used up all the krig'd values. generate next chunk
+            noise = sigma*np.random.randn(krig_bank_size + krig_len) #generate bigger
+            noise[:krig_len] = rand_bank[curll,:] #then replace first krig_len with stored last randn
+            rand_bank[curll,:] = noise[-krig_len:] #store the last krig_len noise for next generation
+            # np.fft.irfft(hf*np.fft.rfft(noise),out=bank[curll,:])
+            c2r(hf*np.fft.rfft(noise),bank[curll,:],np.asarray([0,],dtype='int64'),False,norm,16)
+            krig_ptr[curll] = 0
+        
+        
+    # print("final y is", y)
     return y
-
-@nb.njit()
-def generate_dot(n,x,y,z):
-    for i in range(1,n+1):
-        z[:] = x@y
 
 @nb.njit()
 def generate_rand(n, sigma):
@@ -134,7 +140,7 @@ coeffs=vec.T@Cinv
 sigma = np.sqrt(C[0,0]-vec@Cinv@vec.T)
 print(sigma)
 
-nlevels=4
+nlevels=3
 
 bank=np.zeros((nlevels,krig_len+krig_bank_size),dtype='float64')
 rand_bank = np.zeros((nlevels,krig_len),dtype='float64') #only gotta store the last krig_len rand 
@@ -217,27 +223,30 @@ tot=0
 #     yy[i] = recurse(i,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma)
 #     t2=time.time()
 #     tot+=(t2-t1)
-generate(200,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
+yy=generate(200,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
+# plt.loglog(np.abs(np.fft.rfft(yy[1:])));plt.title("power spectrum")
+# plt.show()
+# sys.exit(0)
 t1=time.time()
-yy = generate(2000000,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len)
+yy = generate(2000000,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len)
 t2=time.time()
 tot1=t2-t1
-print(tot/2000001)
+print(tot1/2000001)
 
-
+plt.loglog(np.abs(np.fft.rfft(yy[1:])));plt.title("power spectrum")
+plt.show()
 # xx=np.random.randn(64)
 # yy=np.random.randn(64)
 # zz=np.empty(64)
 
 # yy = generate_rand(2000000,sigma)
-# # zz = generate_dot(200,xx,yy,zz)
+# zz = generate_dot(200,xx,yy,zz)
 yy = generate_rand(20,sigma)
 t1=time.time()
 yy = generate_rand(2000000,sigma)
 t2=time.time()
 tot2=t2-t1
-print(tot/2000000)
+print(tot2/2000000)
 
 print(tot1/tot2)
-# plt.loglog(np.abs(np.fft.rfft(yy[1:])));plt.title("power spectrum")
-# plt.show()
+
