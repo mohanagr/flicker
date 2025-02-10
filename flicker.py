@@ -6,32 +6,13 @@ import time
 import numba as nb
 import sys
 from rocket_fft import c2r
-##
-# rand bank can be very small - size of filter * 2
-# krig bank can be very big - only need last len(filter) rand for the next million krig
-# total time 15e-8 per samp
-# 1.5e-8 per samp taken up by 64 element dot product, 
-# 5e-8 per samp taken up by FFT + rng + data movement
-# only rng is 2e-8 per samp
-# bad memory access?
-##
 
-# x = np.random.randn(10*500).reshape(10,500)
-# cc = np.random.randn(500)
-# niter=100
-# tot=0
-# for j in range(niter):
-#     t1=time.time()
-#     roll_test(x,cc)
-#     t2=time.time()
-#     tot+=(t2-t1)
-# print("roll of 100 takes", tot/niter)
-# sys.exit(0)
+
 def get_acf(tau,f1,f2):
     s1,c1=sici(2*np.pi*f1*tau)
     s2,c2=sici(2*np.pi*f2*tau)
     y=2*(c2-c1)
-    y=np.nan_to_num(y,nan=2*np.log(f2/f1)+1e-3)
+    y=np.nan_to_num(y,nan=2*np.log(f2/f1)+1e-5)
     return y
 
 def get_impulse(x,coeffs):
@@ -55,8 +36,8 @@ def gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len):
     c2r(hf*np.fft.rfft(noise),bank[level,:],np.asarray([0,],dtype='int64'),False,norm,16)
 
 @nb.njit()
-def generate(n, bank,samp_bank,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len):
-    NUM_STACK = np.zeros(nlevels+1,dtype='int64')
+def generate(n, bank,samp_bank,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len, enable):
+    NUM_STACK = np.zeros(nlevels+1,dtype='int64') # recursion stack should not exceed number of levels but still +1 for good luck
     LEV_STACK = np.zeros(nlevels+1,dtype='int64')
     NUM_STACK[0]=1
     LEV_STACK[0]=nlevels-1
@@ -81,6 +62,8 @@ def generate(n, bank,samp_bank,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,sa
                 # print("tot is", tot)
             if curll==nlevels-1:
                 y[curpt]+=tot
+                if enable:
+                    y[curpt] = y[curpt] + y[curpt-1] + 1e-4*np.random.randn(1)[0]
                 NUM_PTR+=1;NUM_STACK[NUM_PTR]=curpt+1;LEV_STACK[NUM_PTR]=nlevels-1
                 futpt=curpt+1
                 if futpt==n+1: break
@@ -98,7 +81,7 @@ def generate(n, bank,samp_bank,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,sa
         if samp_ptr[curll] > samp_bank_size - 2*bw: #for bottommost level samp_ptr should never move
             samp_bank[curll,:bw+bw-1] = samp_bank[curll, 1-bw-bw:]
             samp_ptr[curll] = 0
-        samp_bank[curll, samp_ptr[curll]+bw+bw-1] = tot #next element after 2bw-1 is 2 bw but we moved sampt ptr
+        samp_bank[curll, samp_ptr[curll]+bw+bw-1] = tot #next element after 2bw-1 is 2*bw but we moved sampt ptr ahead earlier
 
         #handle bank rotations
         krig_ptr[curll] +=1
@@ -110,8 +93,6 @@ def generate(n, bank,samp_bank,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,sa
             # np.fft.irfft(hf*np.fft.rfft(noise),out=bank[curll,:])
             c2r(hf*np.fft.rfft(noise),bank[curll,:],np.asarray([0,],dtype='int64'),False,norm,16)
             krig_ptr[curll] = 0
-        
-        
     # print("final y is", y)
     return y
 
@@ -128,6 +109,12 @@ ps[int(f1*N):int(f2*N)+1]=1/np.arange(int(f1*N),int(f2*N)+1) #N/2 is the scaling
 # acf_dft=N*np.fft.irfft(ps)
 # acf_anl=get_acf(np.arange(0,N//2+1),f1,f2)
 
+if len(sys.argv[1:]) < 2:
+    print("usage flicker.py nlevels npoints")
+    sys.exit(1)
+
+nlevels = int(sys.argv[1])
+npoints = int(sys.argv[2])
 coeff_len = 2048
 krig_len = 1024
 krig_bank_size = 1024*63
@@ -138,15 +125,13 @@ vec=get_acf(np.arange(0,coeff_len)+1,f1,f2)
 vec=vec[::-1]
 coeffs=vec.T@Cinv
 sigma = np.sqrt(C[0,0]-vec@Cinv@vec.T)
-print(sigma)
-
-nlevels=3
+print("krig stddev", sigma)
 
 bank=np.zeros((nlevels,krig_len+krig_bank_size),dtype='float64')
 rand_bank = np.zeros((nlevels,krig_len),dtype='float64') #only gotta store the last krig_len rand 
 rand_bank[:, :] = sigma*np.random.randn(nlevels*krig_len).reshape(nlevels,krig_len)
 
-delta = np.zeros(krig_len) # as long as we want our usable bank of krig to be
+delta = np.zeros(krig_len)
 delta[0]=1
 fir = get_impulse(delta,coeffs) #size of krig coeffs can be different, don't matter.
 # plt.plot(fir)
@@ -155,8 +140,9 @@ fir = get_impulse(delta,coeffs) #size of krig coeffs can be different, don't mat
 # print("firt shape", fir.shape)
 # plt.title("impulse response")
 # plt.show()
-hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size)]))
+hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size)])) #transfer function
 # print(hf.shape)
+
 #burn in the krig_bank
 for level in range(nlevels):
     gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len)
@@ -167,10 +153,9 @@ for level in range(nlevels):
 # plt.title("rand level 0");plt.show()
 # sys.exit(0)
 
-bw=32
+bw=32 #bandwidth of sinc used as oversampling weights
 
 taus=np.arange(-bw,bw)
-print(len(taus))
 # coeff=np.ones(len(taus))
 
 
@@ -188,9 +173,9 @@ samp_bank[0,:] = bank[0,:].copy()
 
 ctr=[0]*nlevels
 # plt.loglog(np.abs(np.fft.rfft(samp_bank[1,:])));plt.title("before")
-
+print("setting up random number banks...")
 for ll in range(1,nlevels):
-    print("processing level", ll, "parent", ll-1)
+    # print("processing level", ll, "parent", ll-1)
     for i in range(samp_bank.shape[1]):
         #generate level's own krig - already there!
     #         print("samp bank begin", samp_bank[ll,i])
@@ -209,9 +194,9 @@ for ll in range(1,nlevels):
             continue
         rownum = i%10 - 1 #row 0 is 0.1
         samp_bank[ll,i] += (osamp_coeffs[rownum,:]@samp_bank[ll-1,ctr[ll-1]:ctr[ll-1]+2*bw])
-print("krig counters", krig_ptr)
-print("samp counters", ctr)
-print("krig + len", np.log2(krig_bank_size+krig_len))
+# print("krig counters", krig_ptr)
+# print("samp counters", ctr)
+# print("krig + len", np.log2(krig_bank_size+krig_len))
 samp_bank_size=krig_bank_size
 samp_bank_small = np.zeros((samp_bank.shape[0], samp_bank_size), dtype='float64')
 samp_bank_small[:,:2*bw] = samp_bank[:,ctr[0]:ctr[0]+2*bw].copy()
@@ -223,17 +208,21 @@ tot=0
 #     yy[i] = recurse(i,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma)
 #     t2=time.time()
 #     tot+=(t2-t1)
-yy=generate(200,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
+yy=generate(200,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len,False)
 # plt.loglog(np.abs(np.fft.rfft(yy[1:])));plt.title("power spectrum")
 # plt.show()
 # sys.exit(0)
 t1=time.time()
-yy = generate(2000000,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len)
+yy = generate(npoints,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len, False)
+yy2 = generate(npoints,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len, True)
 t2=time.time()
 tot1=t2-t1
-print(tot1/2000001)
+print("exectime flicker", tot1/npoints)
 
-plt.loglog(np.abs(np.fft.rfft(yy[1:])));plt.title("power spectrum")
+plt.loglog(np.abs(np.fft.rfft(yy[1:])), label='$alpha$ = -1')
+plt.loglog(np.abs(np.fft.rfft(yy2[1:])), label='-1 < $alpha$ < -2')
+plt.legend()
+plt.title(r"$1/f^\alpha$ power spectrum")
 plt.show()
 # xx=np.random.randn(64)
 # yy=np.random.randn(64)
@@ -243,10 +232,10 @@ plt.show()
 # zz = generate_dot(200,xx,yy,zz)
 yy = generate_rand(20,sigma)
 t1=time.time()
-yy = generate_rand(2000000,sigma)
+yy = generate_rand(npoints,sigma)
 t2=time.time()
 tot2=t2-t1
-print(tot2/2000000)
+print("exectime white", tot2/npoints)
 
-print(tot1/tot2)
+print("exectime ratio flicker/white:", tot1/tot2)
 
