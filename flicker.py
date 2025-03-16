@@ -6,7 +6,7 @@ import time
 import numba as nb
 import sys
 from rocket_fft import c2r
-
+import concurrent.futures
 
 def get_acf(tau,f1,f2):
     s1,c1=sici(2*np.pi*f1*tau)
@@ -35,7 +35,7 @@ def gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len):
     # np.fft.irfft(hf*np.fft.rfft(noise),out=bank[level,:]) # rocket fft doesn't support out kwarg
     c2r(hf*np.fft.rfft(noise),bank[level,:],np.asarray([0,],dtype='int64'),False,norm,16)
 
-@nb.njit()
+@nb.njit(nogil=True)
 def generate(n, bank,samp_bank,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len, enable):
     NUM_STACK = np.zeros(nlevels+1,dtype='int64') # recursion stack should not exceed number of levels but still +1 for good luck
     LEV_STACK = np.zeros(nlevels+1,dtype='int64')
@@ -96,10 +96,11 @@ def generate(n, bank,samp_bank,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,sa
     # print("final y is", y)
     return y
 
-@nb.njit()
+@nb.njit(nogil=True)
 def generate_rand(n, sigma):
     y = sigma*np.random.randn(n)
     return y
+
 
 f1=0.05
 f2=0.5
@@ -208,19 +209,36 @@ tot=0
 #     yy[i] = recurse(i,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma)
 #     t2=time.time()
 #     tot+=(t2-t1)
-yy=generate(200,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len,False)
+generate(200,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len,False)
+generate_rand(20,sigma)
 # plt.loglog(np.abs(np.fft.rfft(yy[1:])));plt.title("power spectrum")
 # plt.show()
 # sys.exit(0)
 t1=time.time()
-yy = generate(npoints,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len, False)
-yy2 = generate(npoints,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len, True)
+args=[npoints,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len, False]
+with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+    fu1=executor.submit(generate, *args)
+    while True:
+        yy=fu1.result()
+        fu1=executor.submit(generate, *args)
+        fu2=executor.submit(generate_rand, 4*npoints, sigma)
+        fu3=executor.submit(generate_rand, 4*npoints, sigma)
+        fu4=executor.submit(generate_rand, 4*npoints, sigma)
+        yy2=fu2.result()
+        yy2=fu3.result()
+        yy2=fu4.result()
+        
+# yy = generate(npoints,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len, False)
+# yy2 = generate(npoints,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len, True)
 t2=time.time()
 tot1=t2-t1
 print("exectime flicker", tot1/npoints)
-
+# print("exectime flicker", tot1/npoints)
 plt.loglog(np.abs(np.fft.rfft(yy[1:])), label='$alpha$ = -1')
-plt.loglog(np.abs(np.fft.rfft(yy2[1:])), label='-1 < $alpha$ < -2')
+plt.legend()
+plt.title(r"$1/f^\alpha$ power spectrum")
+plt.show()
+plt.loglog(np.abs(np.fft.rfft(yy[1:])), label='$alpha$ = -1')
 plt.legend()
 plt.title(r"$1/f^\alpha$ power spectrum")
 plt.show()
