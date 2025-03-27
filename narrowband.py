@@ -8,7 +8,7 @@ import sys
 from rocket_fft import c2r
 import concurrent.futures
 import sys
-
+np.random.seed(42)
 def get_acf(tau,df):
     y = np.sinc(df*tau)
     y[0]+=1e-6
@@ -102,6 +102,18 @@ def generate_rand(n, sigma):
     y = sigma*np.random.randn(n)
     return y
 
+def get_next_y(y_past,x,coeffs):
+    n=len(y_past)
+    print("x passed", x)
+    print("y passed", y_past)
+    y_big = np.hstack([y_past,np.zeros(len(x))])
+    print("y big shape", y_big.shape)
+    print("coeffs shape", coeffs.shape)
+    for i in range(len(x)):
+        y_big[i+n] = coeffs@y_big[i:n+i] + x[i]
+    # plt.plot(y_big)
+    # plt.show()
+    return y_big[n:]
 
 df=0.4
 N=2*1000
@@ -136,6 +148,7 @@ rand_bank[:] = sigma*np.random.randn(krig_len)
 delta = np.zeros(krig_len) #how far back you wanna convolve, length of FIR filter essentially
 delta[0]=1
 fir = get_impulse(delta,coeffs) #size of krig coeffs can be different, don't matter.
+
 # plt.plot(fir)
 # # plt.show()
 # # sys.exit(0)
@@ -155,9 +168,37 @@ hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size)])) #transfer function
 # a2=bank[krig_len:2*krig_len].copy()
 # print("a2", a2)
 print(len(fir), krig_len)
-plt.plot(np.hstack([fir,np.zeros(krig_bank_size)]));plt.show()
-myrand = np.random.randn(krig_len)
-noise = np.zeros(krig_bank_size + krig_len)
+# plt.plot(np.hstack([fir,np.zeros(krig_bank_size)]));plt.show()
+myrand = sigma*np.random.randn(krig_len + krig_bank_size) 
+# 1024     1024     1024    1024 ... 1024
+# ign      coeff     out
+# first out block has output of last in block
+# second out block has output of first in block
+myrand[-krig_len]=0
+krig_out = np.fft.irfft(hf*np.fft.rfft(myrand))
+# krig_manual = np.zeros(krig_bank_size + krig_len)
+krig_manual = np.zeros(krig_bank_size + krig_len)
+# krig_manual[krig_len:2*krig_len] = krig_out[krig_len:2*krig_len]
+# krig_manual[:krig_len] = krig_out[krig_len:2*krig_len] #second block has output of first krig_len randn's
+
+for ii in range(0, krig_bank_size):
+    krig_manual[ii+krig_len] = krig_manual[ii:ii+krig_len]@coeffs + myrand[ii]
+
+# plt.plot(fir[::-1])
+# plt.plot(coeffs)
+# plt.show()
+# print("fir way", fir[::-1]@myrand[1025:2049])
+# print("krig way", krig_manual[:krig_len]@coeffs + myrand[2049])
+# print(len(krig_manual), len(krig_out)-krig_len)
+
+#following totally equal
+plt.plot(krig_out[krig_len:])
+plt.plot(krig_manual[krig_len:])
+
+plt.show()
+
+sys.exit()
+
 noise[-krig_len:] = myrand
 noise[:krig_len] = myrand
 plt.plot(noise);plt.show()
