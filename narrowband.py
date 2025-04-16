@@ -219,12 +219,12 @@ bw=32 #bandwidth of sinc used as oversampling weights
 taus=np.arange(-bw,bw)
 # coeff=np.ones(len(taus))
 
-
 t_n_diff = np.arange(1,10)/10
 osamp_coeffs = np.zeros((len(t_n_diff), len(taus)),dtype='float64')
 for i,dd in enumerate(t_n_diff):
     # print("saving coeffs for", dd)
     osamp_coeffs[i,:] = np.sinc(dd-taus)
+
 krig_ptr = np.zeros(nlevels,dtype='int64')
 samp_ptr = np.zeros(nlevels,dtype='int64')
 #forward generation first to enable later sampling
