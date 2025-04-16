@@ -6,7 +6,9 @@ import time
 import numba as nb
 import sys
 from rocket_fft import c2r
+from scipy.signal import welch
 import concurrent.futures
+
 
 def get_acf(tau,f1,f2):
     s1,c1=sici(2*np.pi*f1*tau)
@@ -110,15 +112,8 @@ ps[int(f1*N):int(f2*N)+1]=1/np.arange(int(f1*N),int(f2*N)+1) #N/2 is the scaling
 # acf_dft=N*np.fft.irfft(ps)
 # acf_anl=get_acf(np.arange(0,N//2+1),f1,f2)
 
-if len(sys.argv[1:]) < 2:
-    print("usage flicker.py nlevels npoints")
-    sys.exit(1)
-
-nlevels = int(sys.argv[1])
-npoints = int(sys.argv[2])
 coeff_len = 2048
 krig_len = 1024
-krig_bank_size = 1024*63
 acf_anl=get_acf(np.arange(0,coeff_len),f1,f2)
 C=toeplitz(acf_anl)
 Cinv=np.linalg.inv(C)
@@ -128,132 +123,72 @@ coeffs=vec.T@Cinv
 sigma = np.sqrt(C[0,0]-vec@Cinv@vec.T)
 print("krig stddev", sigma)
 
-bank=np.zeros((nlevels,krig_len+krig_bank_size),dtype='float64')
-rand_bank = np.zeros((nlevels,krig_len),dtype='float64') #only gotta store the last krig_len rand 
-rand_bank[:, :] = sigma*np.random.randn(nlevels*krig_len).reshape(nlevels,krig_len)
-
 delta = np.zeros(krig_len)
 delta[0]=1
 fir = get_impulse(delta,coeffs) #size of krig coeffs can be different, don't matter.
-# plt.plot(fir)
-# plt.show()
-# sys.exit(0)
-# print("firt shape", fir.shape)
-# plt.title("impulse response")
-# plt.show()
-hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size)])) #transfer function
+
+krig_bank_size = 100*2000
+hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size+200)])) #transfer function
 # print(hf.shape)
 
-#burn in the krig_bank
-for level in range(nlevels):
-    gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len)
-
-# plt.loglog(np.abs(np.fft.rfft(bank[0])));
-# plt.loglog(np.abs(np.fft.rfft(bank[1])));
-# plt.loglog(np.abs(np.fft.rfft(bank[2])));
-# plt.title("rand level 0");plt.show()
-# sys.exit(0)
-
-bw=32 #bandwidth of sinc used as oversampling weights
-
+bw=32
 taus=np.arange(-bw,bw)
-# coeff=np.ones(len(taus))
-
-
 t_n_diff = np.arange(1,10)/10
 osamp_coeffs = np.zeros((len(t_n_diff), len(taus)),dtype='float64')
 for i,dd in enumerate(t_n_diff):
-    # print("saving coeffs for", dd)
+    print((dd-taus)[bw])
     osamp_coeffs[i,:] = np.sinc(dd-taus)
-krig_ptr = np.zeros(nlevels,dtype='int64')
-samp_ptr = np.zeros(nlevels,dtype='int64')
-#forward generation first to enable later sampling
-samp_bank = np.zeros(bank.shape,dtype=bank.dtype)
-# samp_bank = bank.copy()
-samp_bank[0,:] = bank[0,:].copy()
 
-ctr=[0]*nlevels
-# plt.loglog(np.abs(np.fft.rfft(samp_bank[1,:])));plt.title("before")
-print("setting up random number banks...")
-for ll in range(1,nlevels):
-    # print("processing level", ll, "parent", ll-1)
-    for i in range(samp_bank.shape[1]):
-        #generate level's own krig - already there!
-    #         print("samp bank begin", samp_bank[ll,i])
-        krig_samp_own = bank[level,krig_len+krig_ptr[ll]]
-        krig_ptr[ll] +=1
-        if krig_ptr[ll] == krig_bank_size:
-            #used up all the krig'd values. generate next chunk
-            # print("resetting", ll)
-            gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len)
-            krig_ptr[ll] = 0
-        samp_bank[ll,i] += krig_samp_own
-        if i%10==0:
-            # print("level", ll, "i", i)
-            ctr[ll-1]+=1
-            samp_bank[ll,i] += samp_bank[ll-1,ctr[ll-1] + bw]
-            continue
-        rownum = i%10 - 1 #row 0 is 0.1
-        samp_bank[ll,i] += (osamp_coeffs[rownum,:]@samp_bank[ll-1,ctr[ll-1]:ctr[ll-1]+2*bw])
-# print("krig counters", krig_ptr)
-# print("samp counters", ctr)
-# print("krig + len", np.log2(krig_bank_size+krig_len))
-samp_bank_size=krig_bank_size
-samp_bank_small = np.zeros((samp_bank.shape[0], samp_bank_size), dtype='float64')
-samp_bank_small[:,:2*bw] = samp_bank[:,ctr[0]:ctr[0]+2*bw].copy()
+print(len(taus))
 
-tot=0
-# yy=np.empty(2000001,dtype='float64')
-# for i in range(1,2000001):
-#     t1=time.time()
-#     yy[i] = recurse(i,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma)
-#     t2=time.time()
-#     tot+=(t2-t1)
-generate(200,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len,False)
-generate_rand(20,sigma)
-# plt.loglog(np.abs(np.fft.rfft(yy[1:])));plt.title("power spectrum")
-# plt.show()
-# sys.exit(0)
-t1=time.time()
-args=[npoints,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len, False]
-# with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-#     fu1=executor.submit(generate, *args)
-#     while True:
-#         yy=fu1.result()
-#         fu1=executor.submit(generate, *args)
-#         fu2=executor.submit(generate_rand, 4*npoints, sigma)
-#         fu3=executor.submit(generate_rand, 4*npoints, sigma)
-#         fu4=executor.submit(generate_rand, 4*npoints, sigma)
-#         yy2=fu2.result()
-#         yy2=fu3.result()
-#         yy2=fu4.result()
-        
-yy=generate(*args)
-# yy2 = generate(npoints,bank,samp_bank_small,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len, True)
-t2=time.time()
-tot1=t2-t1
-print("exectime flicker", tot1/npoints)
-# print("exectime flicker", tot1/npoints)
-spec=yy[1:].reshape(-1,int(2000))
+rn = np.random.randn(len(fir) + krig_bank_size + 200) #extra hundred to make my oversampling easy
+yy = np.fft.irfft(np.fft.rfft(rn)*hf)[krig_len:]
+bigyy = np.zeros(krig_bank_size*10,dtype=yy.dtype)
+
+curpt=99
+for i in range(len(bigyy)):
+    rownum = i%10
+    if rownum == 0:
+        curpt+=1
+        bigyy[i] = yy[curpt]
+    else:
+        # print(np.arange(curpt-bw,curpt+bw)[bw])
+        # print(rownum-1)
+        bigyy[i] = osamp_coeffs[rownum-1]@yy[curpt-bw:curpt+bw]
+        # sys.exit()
+
+yy=yy[100:-100]
+f,P=welch(yy,nperseg=2000,noverlap=1000)
+spec=yy.reshape(-1,200)
 spec=np.mean(np.abs(np.fft.rfft(spec,axis=1))**2,axis=0)
-# plt.loglog(np.abs(np.fft.rfft(yy[1:])), label='$alpha$ = -1')
-plt.loglog(spec, label='$alpha$ = -1')
-plt.legend()
-plt.title(r"$1/f^\alpha$ power spectrum")
+plt.loglog(np.abs(np.fft.rfft(yy))**2)
+plt.show()
+plt.loglog(spec)
+plt.show()
+plt.loglog(P)
 plt.show()
 
-# xx=np.random.randn(64)
-# yy=np.random.randn(64)
-# zz=np.empty(64)
+f,P=welch(bigyy,nperseg=2000,noverlap=1000)
+spec=bigyy.reshape(-1,2000)
+spec=np.mean(np.abs(np.fft.rfft(spec,axis=1))**2,axis=0)
+plt.loglog(np.abs(np.fft.rfft(bigyy))**2)
+plt.show()
+plt.loglog(spec)
+plt.show()
+plt.loglog(P)
+plt.show()
 
-# yy = generate_rand(2000000,sigma)
-# zz = generate_dot(200,xx,yy,zz)
-yy = generate_rand(20,sigma)
-t1=time.time()
-yy = generate_rand(npoints,sigma)
-t2=time.time()
-tot2=t2-t1
-print("exectime white", tot2/npoints)
+#make some more and add to oversampled one
+hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size*10)]))
+rn = np.random.randn(len(fir) + krig_bank_size*10)
+yy2 = np.fft.irfft(np.fft.rfft(rn)*hf)[krig_len:]
 
-print("exectime ratio flicker/white:", tot1/tot2)
+yytot = bigyy + yy2
 
+#calc spectra again
+plt.loglog(np.abs(np.fft.rfft(yytot))**2)
+plt.show()
+spec=yytot.reshape(-1,2000)
+spec=np.mean(np.abs(np.fft.rfft(spec,axis=1))**2,axis=0)
+plt.loglog(spec)
+plt.show()
