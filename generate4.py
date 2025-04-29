@@ -134,7 +134,7 @@ coeffs=vec.T@Cinv
 sigma = np.sqrt(C[0,0]-vec@Cinv@vec.T)
 print(sigma)
 
-nlevels=4
+nlevels=3
 
 bank=np.zeros((nlevels,krig_len+krig_bank_size),dtype='float64')
 rand_bank = np.zeros((nlevels,krig_len),dtype='float64') #only gotta store the last krig_len rand 
@@ -217,13 +217,18 @@ tot=0
 #     yy[i] = recurse(i,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma)
 #     t2=time.time()
 #     tot+=(t2-t1)
+from scipy.signal import welch
 generate(200,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
 t1=time.time()
 yy = generate(2000000,bank,samp_bank_small,rand_bank,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma, bw, krig_bank_size, samp_bank_size, krig_len)
 t2=time.time()
 tot1=t2-t1
 print(tot/2000001)
-
+f1, Pxx1 = welch(yy, fs=2.0, nperseg=2*10**nlevels)
+plt.loglog(f1[1:], Pxx1[1:])
+plt.legend()
+plt.title(r"$1/f^\alpha$ power spectrum")
+plt.show()
 
 # xx=np.random.randn(64)
 # yy=np.random.randn(64)
@@ -231,12 +236,14 @@ print(tot/2000001)
 
 # yy = generate_rand(2000000,sigma)
 # # zz = generate_dot(200,xx,yy,zz)
+
 yy = generate_rand(20,sigma)
 t1=time.time()
 yy = generate_rand(2000000,sigma)
 t2=time.time()
 tot2=t2-t1
 print(tot/2000000)
+
 
 print(tot1/tot2)
 # plt.loglog(np.abs(np.fft.rfft(yy[1:])));plt.title("power spectrum")

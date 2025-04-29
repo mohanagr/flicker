@@ -183,12 +183,12 @@ for ll in range(1,nlevels):
     for i in range(samp_bank.shape[1]):
         #generate level's own krig - already there!
     #         print("samp bank begin", samp_bank[ll,i])
-        krig_samp_own = bank[ll,krig_len+krig_ptr[ll]]
+        krig_samp_own = bank[level,krig_len+krig_ptr[ll]]
         krig_ptr[ll] +=1
         if krig_ptr[ll] == krig_bank_size:
             #used up all the krig'd values. generate next chunk
             # print("resetting", ll)
-            gen_krig(bank, rand_bank, ll, hf, sigma, krig_bank_size, krig_len)
+            gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len)
             krig_ptr[ll] = 0
         samp_bank[ll,i] += krig_samp_own
         if i%10==0:

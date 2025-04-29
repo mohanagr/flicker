@@ -174,7 +174,7 @@ myrand = sigma*np.random.randn(krig_len + krig_bank_size)
 # ign      coeff     out
 # first out block has output of last in block
 # second out block has output of first in block
-myrand[-krig_len]=0
+# myrand[-krig_len]=0
 krig_out = np.fft.irfft(hf*np.fft.rfft(myrand))
 # krig_manual = np.zeros(krig_bank_size + krig_len)
 krig_manual = np.zeros(krig_bank_size + krig_len)
@@ -182,7 +182,9 @@ krig_manual = np.zeros(krig_bank_size + krig_len)
 # krig_manual[:krig_len] = krig_out[krig_len:2*krig_len] #second block has output of first krig_len randn's
 
 for ii in range(0, krig_bank_size):
-    krig_manual[ii+krig_len] = krig_manual[ii:ii+krig_len]@coeffs + myrand[ii]
+    krig_manual[ii+krig_len] = krig_manual[ii:ii+krig_len]@coeffs + myrand[ii + krig_len]
+
+
 
 # plt.plot(fir[::-1])
 # plt.plot(coeffs)
@@ -192,11 +194,15 @@ for ii in range(0, krig_bank_size):
 # print(len(krig_manual), len(krig_out)-krig_len)
 
 #following totally equal
-plt.plot(krig_out[krig_len:])
-plt.plot(krig_manual[krig_len:])
+plt.plot(krig_out[krig_len:],label='out')
+plt.plot(krig_manual[krig_len:],label='manual')
+plt.legend()
 
 plt.show()
 
+
+plt.plot(np.abs(np.fft.rfft(krig_out[krig_len:])))
+plt.show()
 sys.exit()
 
 noise[-krig_len:] = myrand
