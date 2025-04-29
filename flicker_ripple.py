@@ -6,7 +6,7 @@ import time
 import numba as nb
 import sys
 from rocket_fft import c2r
-from scipy.signal import welch
+from scipy.signal import welch, firwin, resample_poly
 import concurrent.futures
 
 
@@ -37,8 +37,8 @@ def gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len):
     # np.fft.irfft(hf*np.fft.rfft(noise),out=bank[level,:]) # rocket fft doesn't support out kwarg
     c2r(hf*np.fft.rfft(noise),bank[level,:],np.asarray([0,],dtype='int64'),False,norm,16)
 
-@nb.njit(nogil=True)
-def generate(n, bank,samp_bank,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len, enable):
+@nb.njit(nogil=True,cache=True)
+def generate(n, bank,samp_bank,rand_bank,nlevels,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len):
     NUM_STACK = np.zeros(nlevels+1,dtype='int64') # recursion stack should not exceed number of levels but still +1 for good luck
     LEV_STACK = np.zeros(nlevels+1,dtype='int64')
     NUM_STACK[0]=1
@@ -48,24 +48,21 @@ def generate(n, bank,samp_bank,rand_bank,nlevels,coeffs,osamp_coeffs,krig_ptr,sa
     norm=1/(krig_bank_size + krig_len)
     upper=2*bw
     while(NUM_PTR>=0):
-
         curpt=NUM_STACK[NUM_PTR]
         curll=LEV_STACK[NUM_PTR]
         NUM_PTR-=1
         rownum = curpt%10 - 1 #row 0 is 0.1
         # print("Popped point", curpt, "level", curll, "rownum is", rownum+1)
-        tot = bank[curll,krig_len+krig_ptr[curll]]
+        tot = bank[curll,krig_len+krig_ptr[curll]] #bank of krigs
         if curll>0:
             if rownum == -1: #%10 is zero
                 # bank ptr starts at krig len because first krig_len numbers are trash from circular convolution
-                tot =  tot + samp_bank[curll-1,samp_ptr[curll-1]+bw-1]
+                tot =  tot + samp_bank[curll-1,samp_ptr[curll-1]+bw]
             else:
                 tot = tot + osamp_coeffs[rownum,:]@samp_bank[curll-1,samp_ptr[curll-1]:samp_ptr[curll-1]+upper]
                 # print("tot is", tot)
             if curll==nlevels-1:
                 y[curpt]+=tot
-                if enable:
-                    y[curpt] = y[curpt] + y[curpt-1] + 1e-4*np.random.randn(1)[0]
                 NUM_PTR+=1;NUM_STACK[NUM_PTR]=curpt+1;LEV_STACK[NUM_PTR]=nlevels-1
                 futpt=curpt+1
                 if futpt==n+1: break
@@ -103,18 +100,34 @@ def generate_rand(n, sigma):
     y = sigma*np.random.randn(n)
     return y
 
+def plot_spectra(y,size):
+    f,P=welch(y,nperseg=size,noverlap=size//2)
+    spec=y.reshape(-1,size)
+    spec=np.mean(np.abs(np.fft.rfft(spec,axis=1))**2,axis=0)
+    f=plt.gcf()
+    f.set_size_inches(10,4)
+    plt.subplot(121)
+    plt.title("Stacked FFT PS")
+    plt.loglog(spec)
+    plt.subplot(122)
+    plt.title("Welch PS w/ windowing & overlap")
+    plt.loglog(P)
+    plt.tight_layout()
+    plt.show()
 
-f1=0.05
+
+up=10
 f2=0.5
-N=2*1000
-ps=np.zeros(N//2+1,dtype='complex128')
-ps[int(f1*N):int(f2*N)+1]=1/np.arange(int(f1*N),int(f2*N)+1) #N/2 is the scaling factor to line the two PS up.
+f1=0.0496
+# N=2*1000
+# ps=np.zeros(N//2+1,dtype='complex128')
+# ps[int(f1*N):int(f2*N)+1]=1/np.arange(int(f1*N),int(f2*N)+1) #N/2 is the scaling factor to line the two PS up.
 # acf_dft=N*np.fft.irfft(ps)
 # acf_anl=get_acf(np.arange(0,N//2+1),f1,f2)
 
 coeff_len = 2048
 krig_len = 1024
-acf_anl=get_acf(np.arange(0,coeff_len),f1,f2)
+acf_anl=get_acf(np.arange(0,coeff_len),f1,f2) #+ 500*np.cos(np.arange(0,coeff_len)*2*np.pi*f2)
 C=toeplitz(acf_anl)
 Cinv=np.linalg.inv(C)
 vec=get_acf(np.arange(0,coeff_len)+1,f1,f2)
@@ -127,23 +140,88 @@ delta = np.zeros(krig_len)
 delta[0]=1
 fir = get_impulse(delta,coeffs) #size of krig coeffs can be different, don't matter.
 
-krig_bank_size = 100*2000
-hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size+200)])) #transfer function
+krig_bank_size = 2048
+hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size)])) #transfer function
+# hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size+200)])) #transfer function + 200 for manual osamp later
 # print(hf.shape)
 
-bw=32
+# from scipy.signal import resample_poly, kaiser
+
+# design a 64‑tap filter good for ×10 interpolation
+# beta  = 8.6                           # 100 dB stopband
+# h_all = kaiser(64, beta) * np.sinc(np.linspace(-3.2, 3.2, 64))  # windowed‑sinc
+
+# y = resample_poly(x, up=10, down=1, window=h_all)
+
+bw=100
 taus=np.arange(-bw,bw)
-t_n_diff = np.arange(1,10)/10
+t_n_diff = np.arange(1,up)/up
 osamp_coeffs = np.zeros((len(t_n_diff), len(taus)),dtype='float64')
 for i,dd in enumerate(t_n_diff):
     print((dd-taus)[bw])
     osamp_coeffs[i,:] = np.sinc(dd-taus)
 
-print(len(taus))
+# bw=50
+# oo = np.sinc(-(np.arange(0,2*bw*10)/10-bw))
+# oo=oo.reshape(100,10).T.copy()
+# osamp_coeffs = oo[1:,:].copy()
+# flen=2*bw*10
+# osamp_coeffs = firwin(flen, cutoff=1/5, window=('hann'))
+# osamp_coeffs = osamp_coeffs/osamp_coeffs.max()
+# osamp_coeffs = osamp_coeffs.reshape(flen//10,10).T.copy()
+# print(len(taus))
+nlevels=4
 
-rn = np.random.randn(len(fir) + krig_bank_size + 200) #extra hundred to make my oversampling easy
+rand_bank = np.zeros((nlevels,krig_len),dtype='float64') #only gotta store the last krig_len rand 
+rand_bank[:, :] = sigma*np.random.randn(nlevels*krig_len).reshape(nlevels,krig_len) #white noise bank
+
+krig_ptr = np.zeros(nlevels,dtype='int64')
+samp_ptr = np.zeros(nlevels,dtype='int64')
+bank=np.zeros((nlevels,krig_len+krig_bank_size),dtype='float64') #krig bank
+gen_krig(bank, rand_bank, 0, hf, sigma, krig_bank_size, krig_len)
+gen_krig(bank, rand_bank, 1, hf, sigma, krig_bank_size, krig_len)
+gen_krig(bank, rand_bank, 2, hf, sigma, krig_bank_size, krig_len)
+# plot_spectra(bank[0,krig_len:],200)
+# plot_spectra(bank[1,krig_len:],200)
+# sys.exit()
+samp_bank = np.zeros((nlevels, krig_bank_size),dtype=bank.dtype) #krig + white bank
+samp_bank[0,:] = bank[0,krig_len:].copy() #topmost level just krig
+samp_bank_size = samp_bank.shape[1]
+ctr=[0]*nlevels
+#let's try to forward generate two levels, long timestream and look at spectra.
+for ll in range(1,nlevels):
+    # print("processing level", ll, "parent", ll-1)
+    for i in range(samp_bank.shape[1]):
+        #generate level's own krig - already there!
+    #         print("samp bank begin", samp_bank[ll,i])
+        krig_samp_own = bank[ll,krig_len+krig_ptr[ll]]
+        krig_ptr[ll] +=1
+        if krig_ptr[ll] == krig_bank_size:
+            #used up all the krig'd values. generate next chunk
+            print("ran out of krig. resetting", ll)
+            gen_krig(bank, rand_bank, ll, hf, sigma, krig_bank_size, krig_len)
+            krig_ptr[ll] = 0
+        samp_bank[ll,i] += krig_samp_own
+        if i%10==0:
+            # print("level", ll, "i", i)
+            ctr[ll-1]+=1
+            samp_bank[ll,i] += samp_bank[ll-1,ctr[ll-1] + bw]
+        else:
+            rownum = i%10 - 1 #row 0 is 0.1
+            samp_bank[ll,i] += (osamp_coeffs[rownum,:]@samp_bank[ll-1,ctr[ll-1]:ctr[ll-1]+2*bw])
+
+print("ctrs",ctr)
+# plot_spectra(samp_bank[1,:],2048)
+# plot_spectra(samp_bank[2,:],2048)
+yy=generate(20000000, bank,samp_bank,rand_bank,nlevels,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
+plot_spectra(yy[1:],20000)
+sys.exit()
+
+krig_bank_size = 2000*100
+hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size+200)]))
+rn = sigma*np.random.randn(len(fir) + krig_bank_size + 200) #extra hundred to make my oversampling easy
 yy = np.fft.irfft(np.fft.rfft(rn)*hf)[krig_len:]
-bigyy = np.zeros(krig_bank_size*10,dtype=yy.dtype)
+bigyy = np.zeros(krig_bank_size*up,dtype=yy.dtype)
 
 curpt=99
 for i in range(len(bigyy)):
@@ -156,39 +234,24 @@ for i in range(len(bigyy)):
         # print(rownum-1)
         bigyy[i] = osamp_coeffs[rownum-1]@yy[curpt-bw:curpt+bw]
         # sys.exit()
+# beta = 0.1102*(60 - 8.7)
 
 yy=yy[100:-100]
-f,P=welch(yy,nperseg=2000,noverlap=1000)
-spec=yy.reshape(-1,200)
-spec=np.mean(np.abs(np.fft.rfft(spec,axis=1))**2,axis=0)
-plt.loglog(np.abs(np.fft.rfft(yy))**2)
-plt.show()
-plt.loglog(spec)
-plt.show()
-plt.loglog(P)
-plt.show()
+# bigyy2= resample_poly(yy,up=up,down=1,window=('kaiser',beta))
+bigyy2= resample_poly(yy,up=10,down=1,window=('kaiser',2))
 
-f,P=welch(bigyy,nperseg=2000,noverlap=1000)
-spec=bigyy.reshape(-1,2000)
-spec=np.mean(np.abs(np.fft.rfft(spec,axis=1))**2,axis=0)
-plt.loglog(np.abs(np.fft.rfft(bigyy))**2)
-plt.show()
-plt.loglog(spec)
-plt.show()
-plt.loglog(P)
-plt.show()
+# plot_spectra(yy,2000)
+# plot_spectra(bigyy,2000)
+# plot_spectra(bigyy2,2000)
+# sys.exit()
 
 #make some more and add to oversampled one
-hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size*10)]))
-rn = np.random.randn(len(fir) + krig_bank_size*10)
+hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size*up)]))
+rn = sigma*np.random.randn(len(fir) + krig_bank_size*up)
 yy2 = np.fft.irfft(np.fft.rfft(rn)*hf)[krig_len:]
 
 yytot = bigyy + yy2
-
 #calc spectra again
-plt.loglog(np.abs(np.fft.rfft(yytot))**2)
-plt.show()
-spec=yytot.reshape(-1,2000)
-spec=np.mean(np.abs(np.fft.rfft(spec,axis=1))**2,axis=0)
-plt.loglog(spec)
-plt.show()
+plot_spectra(yytot,2000)
+yytot = bigyy2 + yy2
+plot_spectra(yytot,2000)
