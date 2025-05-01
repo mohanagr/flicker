@@ -51,19 +51,17 @@ def generate(n, bank,samp_bank,rand_bank,nlevels,osamp_coeffs,krig_ptr,samp_ptr,
         curpt=NUM_STACK[NUM_PTR]
         curll=LEV_STACK[NUM_PTR]
         NUM_PTR-=1
-        rownum = curpt%10 - 1 #row 0 is 0.1
+        rownum = curpt%10
         # print("Popped point", curpt, "level", curll, "rownum is", rownum+1)
         tot = bank[curll,krig_len+krig_ptr[curll]] #bank of krigs
         if curll>0:
-            if rownum == -1: #%10 is zero
-                # bank ptr starts at krig len because first krig_len numbers are trash from circular convolution
-                tot =  tot + samp_bank[curll-1,samp_ptr[curll-1]+bw]
-            else:
-                tot = tot + osamp_coeffs[rownum,:]@samp_bank[curll-1,samp_ptr[curll-1]:samp_ptr[curll-1]+upper]
-                # print("tot is", tot)
+            tot = tot + osamp_coeffs[rownum,:]@samp_bank[curll-1,samp_ptr[curll-1]:samp_ptr[curll-1]+upper]
+            # print("tot is", tot)
             if curll==nlevels-1:
                 y[curpt]+=tot
-                NUM_PTR+=1;NUM_STACK[NUM_PTR]=curpt+1;LEV_STACK[NUM_PTR]=nlevels-1
+                NUM_PTR+=1;
+                NUM_STACK[NUM_PTR]=curpt+1
+                LEV_STACK[NUM_PTR]=nlevels-1
                 futpt=curpt+1
                 if futpt==n+1: break
                 for ii in range(nlevels-1):
@@ -77,10 +75,14 @@ def generate(n, bank,samp_bank,rand_bank,nlevels,osamp_coeffs,krig_ptr,samp_ptr,
                         LEV_STACK[NUM_PTR]=nlevels-2-ii
         
         samp_ptr[curll] +=1
-        if samp_ptr[curll] > samp_bank_size - 2*bw: #for bottommost level samp_ptr should never move
-            samp_bank[curll,:bw+bw-1] = samp_bank[curll, 1-bw-bw:]
+        if samp_ptr[curll] > samp_bank_size - 2*bw:
+            samp_bank[curll,:bw+bw-1] = samp_bank[curll, 1-bw-bw:] 
+            #say bw = 64. consider final 64 elements: idx 0-63. when we at 0, we still have 64 avl.
+            # when we at 1, we have only 63 remaining.
+            # copy these 63 back to beginning
             samp_ptr[curll] = 0
-        samp_bank[curll, samp_ptr[curll]+bw+bw-1] = tot #next element after 2bw-1 is 2*bw but we moved sampt ptr ahead earlier
+        #and point 64, idx 63 is now the tot we evalulated
+        samp_bank[curll, samp_ptr[curll]+bw+bw-1] = tot
 
         #handle bank rotations
         krig_ptr[curll] +=1
@@ -142,105 +144,70 @@ delta[0]=1
 fir = get_impulse(delta,coeffs) #size of krig coeffs can be different, don't matter.
 plt.plot(fir)
 plt.show()
-krig_bank_size = 2048
+krig_bank_size = 63*2048
 hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size)])) #transfer function
 # hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size+200)])) #transfer function + 200 for manual osamp later
-# print(hf.shape)
-
-# from scipy.signal import resample_poly, kaiser
-
-# design a 64‑tap filter good for ×10 interpolation
-# beta  = 8.6                           # 100 dB stopband
-# h_all = kaiser(64, beta) * np.sinc(np.linspace(-3.2, 3.2, 64))  # windowed‑sinc
-
-# y = resample_poly(x, up=10, down=1, window=h_all)
-
-# bw=100
-# taus=np.arange(-bw,bw)
-# t_n_diff = np.arange(0,up)/up
-# osamp_coeffs = np.zeros((len(t_n_diff), len(taus)),dtype='float64')
-# for i,dd in enumerate(t_n_diff):
-#     print((dd-taus)[bw])
-#     osamp_coeffs[i,:] = np.sinc(dd-taus)
-
-# h_orig = osamp_coeffs.T.ravel()
-# plt.loglog(np.abs(np.fft.rfft(h_orig))**2)
-# plt.show()
-
-# h_orig = h_orig*np.hamming(len(h_orig))
-# h=10*firwin(200*up, 0.25,window=('kaiser',10))
-# plt.loglog(np.abs(np.fft.rfft(h_orig))**2)
-# plt.loglog(np.abs(np.fft.rfft(h))**2)
-# plt.show()
-
-# osamp_coeffs = h_orig.reshape(-1,10).T.copy()
-# print(osamp_coeffs.shape)
-
-# bw=50
-# oo = np.sinc(-(np.arange(0,2*bw*10)/10-bw))
-# oo=oo.reshape(100,10).T.copy()
-# osamp_coeffs = oo[1:,:].copy()
-# flen=2*bw*10
-# osamp_coeffs = firwin(flen, cutoff=1/5, window=('hann'))
-# osamp_coeffs = osamp_coeffs/osamp_coeffs.max()
-# osamp_coeffs = osamp_coeffs.reshape(flen//10,10).T.copy()
-# print(len(taus))
-nlevels=4
-
-# rand_bank = np.zeros((nlevels,krig_len),dtype='float64') #only gotta store the last krig_len rand 
-# rand_bank[:, :] = sigma*np.random.randn(nlevels*krig_len).reshape(nlevels,krig_len) #white noise bank
-
-# krig_ptr = np.zeros(nlevels,dtype='int64')
-# samp_ptr = np.zeros(nlevels,dtype='int64')
-# bank=np.zeros((nlevels,krig_len+krig_bank_size),dtype='float64') #krig bank
-# gen_krig(bank, rand_bank, 0, hf, sigma, krig_bank_size, krig_len)
-# gen_krig(bank, rand_bank, 1, hf, sigma, krig_bank_size, krig_len)
-# gen_krig(bank, rand_bank, 2, hf, sigma, krig_bank_size, krig_len)
-# # plot_spectra(bank[0,krig_len:],200)
-# # plot_spectra(bank[1,krig_len:],200)
-# # sys.exit()
-# samp_bank = np.zeros((nlevels, krig_bank_size),dtype=bank.dtype) #krig + white bank
-# samp_bank[0,:] = bank[0,krig_len:].copy() #topmost level just krig
-# samp_bank_size = samp_bank.shape[1]
-# ctr=[0]*nlevels
-# #let's try to forward generate two levels, long timestream and look at spectra.
-# for ll in range(1,nlevels):
-#     # print("processing level", ll, "parent", ll-1)
-#     for i in range(samp_bank.shape[1]):
-#         #generate level's own krig - already there!
-#     #         print("samp bank begin", samp_bank[ll,i])
-#         krig_samp_own = bank[ll,krig_len+krig_ptr[ll]]
-#         krig_ptr[ll] +=1
-#         if krig_ptr[ll] == krig_bank_size:
-#             #used up all the krig'd values. generate next chunk
-#             print("ran out of krig. resetting", ll)
-#             gen_krig(bank, rand_bank, ll, hf, sigma, krig_bank_size, krig_len)
-#             krig_ptr[ll] = 0
-#         samp_bank[ll,i] += krig_samp_own
-#         if i%10==0:
-#             # print("level", ll, "i", i)
-#             ctr[ll-1]+=1
-#             samp_bank[ll,i] += samp_bank[ll-1,ctr[ll-1] + bw]
-#         else:
-#             rownum = i%10 - 1 #row 0 is 0.1
-#             samp_bank[ll,i] += (osamp_coeffs[rownum,:]@samp_bank[ll-1,ctr[ll-1]:ctr[ll-1]+2*bw])
-
-# print("ctrs",ctr)
-# # plot_spectra(samp_bank[1,:],2048)
-# # plot_spectra(samp_bank[2,:],2048)
-# yy=generate(20000000, bank,samp_bank,rand_bank,nlevels,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
-# plot_spectra(yy[1:],20000)
-# sys.exit()
-
-
 #design a filter to replace osamp_coeffs
 import upsample_poly as upsamp
 half_size = 64
+bw=half_size
 h=firwin(2*half_size*up+1, 0.11,window=('kaiser',14))
 print("len h", len(h))
 plt.title("Filter response function")
 plt.loglog(2*np.arange(0,len(h)//2+1)/len(h),np.abs(np.fft.rfft(h))**2)
 plt.show()
+
+osamp_coeffs = h[:-1].reshape(-1,4).T[:,::-1].copy() #refer to notes. (last column is h[0], h[1], h[2]. h[3])
+
+nlevels=3
+
+rand_bank = np.zeros((nlevels,krig_len),dtype='float64') #only gotta store the last krig_len rand 
+rand_bank[:, :] = sigma*np.random.randn(nlevels*krig_len).reshape(nlevels,krig_len) #white noise bank
+
+krig_ptr = np.zeros(nlevels,dtype='int64')
+samp_ptr = np.zeros(nlevels,dtype='int64')
+bank=np.zeros((nlevels,krig_len+krig_bank_size),dtype='float64') #krig bank
+gen_krig(bank, rand_bank, 0, hf, sigma, krig_bank_size, krig_len)
+gen_krig(bank, rand_bank, 1, hf, sigma, krig_bank_size, krig_len)
+gen_krig(bank, rand_bank, 2, hf, sigma, krig_bank_size, krig_len)
+# plot_spectra(bank[0,krig_len:],200)
+# plot_spectra(bank[1,krig_len:],200)
+# sys.exit()
+samp_bank = np.zeros((nlevels, krig_bank_size),dtype=bank.dtype) #krig + white bank
+samp_bank[0,:] = bank[0,krig_len:].copy() #topmost level just krig
+samp_bank_size = samp_bank.shape[1]
+ctr=[0]*nlevels
+#let's try to forward generate two levels, long timestream and look at spectra.
+for ll in range(1,nlevels):
+    # print("processing level", ll, "parent", ll-1)
+    for i in range(samp_bank.shape[1]):
+        #generate level's own krig - already there!
+    #         print("samp bank begin", samp_bank[ll,i])
+        krig_samp_own = bank[ll,krig_len+krig_ptr[ll]]
+        krig_ptr[ll] +=1
+        if krig_ptr[ll] == krig_bank_size:
+            #used up all the krig'd values. generate next chunk
+            print("ran out of krig. resetting", ll)
+            gen_krig(bank, rand_bank, ll, hf, sigma, krig_bank_size, krig_len)
+            krig_ptr[ll] = 0
+        samp_bank[ll,i] += krig_samp_own
+        if i%10==0:
+            # print("level", ll, "i", i)
+            ctr[ll-1]+=1
+            samp_bank[ll,i] += samp_bank[ll-1,ctr[ll-1] + bw]
+        else:
+            rownum = i%10 - 1 #row 0 is 0.1
+            samp_bank[ll,i] += (osamp_coeffs[rownum,:]@samp_bank[ll-1,ctr[ll-1]:ctr[ll-1]+2*bw])
+
+# print("ctrs",ctr)
+# # plot_spectra(samp_bank[1,:],2048)
+# # plot_spectra(samp_bank[2,:],2048)
+yy=generate(2000000, bank,samp_bank,rand_bank,nlevels,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
+# plot_spectra(yy[1:],20000)
+# sys.exit()
+
+
+
 
 krig_bank_size = 2000*100
 hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size+2*half_size)]))
