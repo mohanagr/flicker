@@ -47,11 +47,12 @@ def generate(n, bank,samp_bank,rand_bank,nlevels,osamp_coeffs,krig_ptr,samp_ptr,
     NUM_PTR=0
     norm=1/(krig_bank_size + krig_len)
     upper=2*bw
+    up = osamp_coeffs.shape[0]
     while(NUM_PTR>=0):
         curpt=NUM_STACK[NUM_PTR]
         curll=LEV_STACK[NUM_PTR]
         NUM_PTR-=1
-        rownum = curpt%10
+        rownum = curpt%up
         # print("Popped point", curpt, "level", curll, "rownum is", rownum+1)
         tot = bank[curll,krig_len+krig_ptr[curll]] #bank of krigs
         if curll>0:
@@ -65,8 +66,8 @@ def generate(n, bank,samp_bank,rand_bank,nlevels,osamp_coeffs,krig_ptr,samp_ptr,
                 futpt=curpt+1
                 if futpt==n+1: break
                 for ii in range(nlevels-1):
-                    rem=futpt%10
-                    quo=futpt//10
+                    rem=futpt%up
+                    quo=futpt//up
                     if rem>0: break
                     else:
                         futpt=quo
@@ -119,8 +120,8 @@ def plot_spectra(y,size):
 
 
 up=10
-f2=0.5/2
-f1=0.99*0.5/20
+f2=0.5
+f1=0.5/up
 # N=2*1000
 # ps=np.zeros(N//2+1,dtype='complex128')
 # ps[int(f1*N):int(f2*N)+1]=1/np.arange(int(f1*N),int(f2*N)+1) #N/2 is the scaling factor to line the two PS up.
@@ -151,15 +152,15 @@ hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size)])) #transfer function
 import upsample_poly as upsamp
 half_size = 64
 bw=half_size
-h=firwin(2*half_size*up+1, 0.11,window=('kaiser',14))
+h=up*firwin(2*half_size*up+1, 0.1,window=('kaiser',10))
 print("len h", len(h))
 plt.title("Filter response function")
 plt.loglog(2*np.arange(0,len(h)//2+1)/len(h),np.abs(np.fft.rfft(h))**2)
 plt.show()
 
-osamp_coeffs = h[:-1].reshape(-1,4).T[:,::-1].copy() #refer to notes. (last column is h[0], h[1], h[2]. h[3])
+osamp_coeffs = h[:-1].reshape(-1,up).T[:,::-1].copy() #refer to notes. (last column is h[0], h[1], h[2]. h[3])
 
-nlevels=3
+nlevels=4
 
 rand_bank = np.zeros((nlevels,krig_len),dtype='float64') #only gotta store the last krig_len rand 
 rand_bank[:, :] = sigma*np.random.randn(nlevels*krig_len).reshape(nlevels,krig_len) #white noise bank
@@ -167,9 +168,8 @@ rand_bank[:, :] = sigma*np.random.randn(nlevels*krig_len).reshape(nlevels,krig_l
 krig_ptr = np.zeros(nlevels,dtype='int64')
 samp_ptr = np.zeros(nlevels,dtype='int64')
 bank=np.zeros((nlevels,krig_len+krig_bank_size),dtype='float64') #krig bank
-gen_krig(bank, rand_bank, 0, hf, sigma, krig_bank_size, krig_len)
-gen_krig(bank, rand_bank, 1, hf, sigma, krig_bank_size, krig_len)
-gen_krig(bank, rand_bank, 2, hf, sigma, krig_bank_size, krig_len)
+for jj in range(nlevels):
+    gen_krig(bank, rand_bank, jj, hf, sigma, krig_bank_size, krig_len)
 # plot_spectra(bank[0,krig_len:],200)
 # plot_spectra(bank[1,krig_len:],200)
 # sys.exit()
@@ -191,23 +191,19 @@ for ll in range(1,nlevels):
             gen_krig(bank, rand_bank, ll, hf, sigma, krig_bank_size, krig_len)
             krig_ptr[ll] = 0
         samp_bank[ll,i] += krig_samp_own
-        if i%10==0:
-            # print("level", ll, "i", i)
-            ctr[ll-1]+=1
-            samp_bank[ll,i] += samp_bank[ll-1,ctr[ll-1] + bw]
-        else:
-            rownum = i%10 - 1 #row 0 is 0.1
-            samp_bank[ll,i] += (osamp_coeffs[rownum,:]@samp_bank[ll-1,ctr[ll-1]:ctr[ll-1]+2*bw])
+        rownum = i%up
+        samp_bank[ll,i] += (osamp_coeffs[rownum,:]@samp_bank[ll-1,ctr[ll-1]:ctr[ll-1]+2*bw])
 
 # print("ctrs",ctr)
 # # plot_spectra(samp_bank[1,:],2048)
 # # plot_spectra(samp_bank[2,:],2048)
-yy=generate(2000000, bank,samp_bank,rand_bank,nlevels,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
+yy=generate(20000000, bank,samp_bank,rand_bank,nlevels,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
 # plot_spectra(yy[1:],20000)
 # sys.exit()
 
+plot_spectra(yy[1:],20000)
 
-
+# sys.exit()
 
 krig_bank_size = 2000*100
 hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size+2*half_size)]))
@@ -261,7 +257,7 @@ hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size*up)]))
 rn = sigma*np.random.randn(len(fir) + krig_bank_size*up)
 yy2 = np.fft.irfft(np.fft.rfft(rn)*hf)[krig_len:]
 
-yytot = 10*bigyy + yy2
+yytot = bigyy + yy2
 #calc spectra again
 plot_spectra(yytot,2000)
 # yytot = bigyy2 + yy2
