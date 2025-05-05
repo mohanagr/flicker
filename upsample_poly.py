@@ -3,6 +3,28 @@ from scipy.signal import resample_poly, upfirdn, firwin
 from matplotlib import pyplot as plt
 import numba as nb
 import time
+import sys
+import ctypes
+import os
+
+# 1) Load the shared library
+_here = os.path.dirname(__file__)
+lib = ctypes.CDLL(os.path.join(_here, "libpolyphase.so"))
+
+# 2) Declare the argument and return types
+lib.get_osamp_polyphase.argtypes = [
+    ctypes.c_void_p,  # y
+    ctypes.c_void_p,  # x
+    ctypes.c_void_p,  # h
+    ctypes.c_int64,                   # half_size
+    ctypes.c_int64,                   # L
+    ctypes.c_int64,                   # nx
+]
+lib.get_osamp_polyphase.restype = None
+
+
+
+     
 @nb.njit(cache=True)
 def interp_poly(x,h,L,y):
     bw = (len(h)-1)//(2*L)
@@ -36,8 +58,12 @@ def big_interp(x,h,L,y,bw):
     for i in nb.prange(N):
         interp_poly(x[i : 2*bw+i],h,L,y[i*L:(i+1)*L])
 
+def big_interp_c(x,h,L,y,bw):
+    lib.get_osamp_polyphase(y.ctypes.data, x.ctypes.data, h.ctypes.data, bw, L, len(x))
+
+
 if __name__=='__main__':
-    L=10
+    L=150 #upsample fastest if L is a multiple of 4 due to AVX2 being enabled.
     bw=32
     np.random.seed(42)
     x = np.random.randn(2*bw)
@@ -67,25 +93,38 @@ if __name__=='__main__':
     leny = lenx*L
     xbig = np.random.randn(lenx + 2*bw) #pad front and back so we get exactly len y out
     ybig = np.zeros(leny,dtype='float64')
+    ybigc = np.zeros(leny,dtype='float64')
     big_interp(xbig,h,L,ybig,bw)
+    big_interp_c(xbig,h,L,ybigc,bw)
     print("compiled big")
+    print(len(ybig), ybig)
+    print(len(ybigc), ybigc)
+    print("max error", np.max(np.abs(ybig-ybigc)))
+    # sys.exit()
 
 
     t1=time.time()
-    for ni in range(10):
+    for ni in range(100):
         yf = np.zeros(leny//2+1,dtype='complex128') #about 15 us. isnt much
         yf[:lenx//2+1] = np.fft.rfft(xbig[bw:-bw])
         ybigfft = np.fft.irfft(yf) #most time
     t2=time.time()
-    print("FFT upsample", (t2-t1)/10)
+    print("FFT upsample", (t2-t1)/100)
 
 
     t1=time.time()
-    for ni in range(10):
+    for ni in range(1000):
         big_interp(xbig,h,L,ybig,bw)
     t2=time.time()
-    print("polyphase upsample", (t2-t1)/10)
+    print("polyphase upsample", (t2-t1)/1000)
 
+    t1=time.time()
+    for ni in range(1000):
+        big_interp_c(xbig,h,L,ybig,bw)
+    t2=time.time()
+    print("polyphase C upsample", (t2-t1)/1000)
+
+    sys.exit()
 
     fs=250e3
     frac_bw = 0.4
