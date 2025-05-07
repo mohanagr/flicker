@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <immintrin.h>
 #include <omp.h>
-//gcc -O3 -march=native -fPIC -shared -fopenmp polyphase.c -o libpolyphase.so
+//gcc -O3 -march=native -mavx2 -mfma -fPIC -shared -fopenmp polyphase.c -o libpolyphase.so
 //gcc -O3 -march=native -fPIC -shared -fopenmp polyphase.c -o libpolyphase.so
 
 // void get_osamp_polyphase(double * y, double * x, double * h, int64_t half_size, int64_t L, int64_t nx)
@@ -36,8 +36,12 @@
 
 void get_osamp_polyphase(double * y, double * x, double * h, int64_t half_size, int64_t L, int64_t nx)
 {
-        //naive implementation
         int64_t N = nx - 2*half_size, M = 2*half_size;
+        #pragma omp parallel for
+        for (int64_t i = 0; i < N*L; i++)
+        {
+                y[i]=0;
+        }
         #pragma omp parallel for
         for (int64_t k = 0; k < N; k++)
         {       
