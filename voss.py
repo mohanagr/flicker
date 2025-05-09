@@ -54,6 +54,11 @@ if __name__ == "__main__":
     y2 = voss_mccartney_alpha(N, ROWS, ALPHA2)
     f2, Pxx2 = welch(y2, fs=1.0, nperseg=2**14)
     
+    plt.plot(y2)
+    plt.show()
+
+    plt.plot(np.cumsum(y2))
+    plt.show()
     
     plt.figure()
     plt.loglog(f1[1:], Pxx1[1:], label=f"α={ALPHA1}")
