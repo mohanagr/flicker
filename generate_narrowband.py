@@ -11,6 +11,10 @@ from scipy.signal import firwin
 import sys
 from upsample_poly import big_interp_c
 from scipy.interpolate import CubicSpline, splrep, splev
+import os
+os.environ['NUMBA_OPT']='3'
+os.environ['NUMBA_LOOP_VECTORIZE']='1'
+os.environ['NUMBA_ENABLE_AVX']='1'
 
 # np.random.seed(42)
 @nb.njit(cache=True)
