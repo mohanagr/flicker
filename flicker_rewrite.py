@@ -77,9 +77,9 @@ def generate(
         nlevels + 1, dtype="int64"
     )  # recursion stack should not exceed number of levels but still +1 for good luck
     LEV_STACK = np.zeros(nlevels + 1, dtype="int64")
-    NUM_STACK[0] = 1
+    NUM_STACK[0] = 0
     LEV_STACK[0] = nlevels - 1
-    circular_buffer_offsets = np.zeros(nlevels)
+    circular_buffer_offsets = np.zeros(nlevels,dtype='int64')
     y = np.zeros(
         n, dtype="float64"
     )  # we have krig_bank_size values already from forward generation
@@ -94,40 +94,53 @@ def generate(
         quo = pt // up
         rem = pt % up
         cbop = circular_buffer_offsets[lev - 1]
-
+        print(f"lev {lev} pt {pt} quo {quo} rem {rem} cbo of prev lev {cbop}")
         # if this level doesn't have enough krig vals left, regenerate
+        if krig_ptr[lev] - krig_len > krig_bank_size:
+            print(f"lev {lev} krig_ptr set to 0")
+            krig_ptr = 0
+            #regeneration here
 
-        if lev == 0:
-            # handle base level
-            pass
         # check visited status
-        if quo > samp_ptr[lev - 1] + cbop:
+        print(f"checking quo+upper {quo+upper -1} > {samp_ptr[lev-1]} + {cbop}")
+        if quo + upper - 1 > samp_ptr[lev - 1] + cbop: #keep checking ahead
             # parent hasn't been visted yet
             # push
             NUM_PTR += 1
             LEV_STACK[NUM_PTR] = lev - 1
-            NUM_STACK[NUM_PTR] = quo
+            NUM_STACK[NUM_PTR] = quo + upper - 1
+            print(f"pushed lev {lev-1} and {quo}")
         else:
             # make sure we have enough room left in circular buffer
-            samp_ptr[lev] += 1
-            if samp_ptr[lev] + upper > krig_bank_size:
-                circular_buffer_offsets[lev] = pt
-                samp_ptr[lev] = 0
-                samp_bank[lev, : upper - 1] = samp_bank[lev, -upper + 1 :]
             tot = krig_bank[lev, krig_ptr[lev]]
-            if lev==0:
-                samp_bank[samp_ptr[lev] + upper - 1] = tot
-            if lev > 0 and lev < nlevels-1:
-                tot += osamp_coeffs[rem, :]@samp_bank[lev - 1, quo - cbop : quo - cbop + upper]
-                samp_bank[samp_ptr[lev] + upper - 1] = tot
-            NUM_PTR-=1 #pop
             if lev == nlevels-1:
+                print("adding pt + 1 to stack")
+                tot += osamp_coeffs[rem, :]@samp_bank[lev - 1, quo - cbop : quo - cbop + upper]
                 y[pt] = tot
-                NUM_PTR+=1
+                # NUM_PTR+=1 #pop and push combined
                 LEV_STACK[NUM_PTR]=nlevels-1
                 NUM_STACK[NUM_PTR]=pt+1
-                samp_bank[samp_ptr[lev] + upper - 1] = tot
-
+            else:
+                samp_ptr[lev] += 1
+                print(f"samp_ptr for lev {lev} incremented to", samp_ptr[lev])
+                if samp_ptr[lev] + upper > krig_bank_size:
+                    circular_buffer_offsets[lev] = pt - upper + 1
+                    print(f"cbo for lev {lev} set to {circular_buffer_offsets[lev]}")
+                    samp_ptr[lev] = upper - 1 #this just indicates the tail of moving window
+                    print("the first point is now,", np.arange(0,200)[-upper+1])
+                    samp_bank[lev, : upper - 1] = samp_bank[lev, -upper + 1 :]
+                    print(f"last elements included were {samp_bank[lev, -upper+1]}, {samp_bank[lev, -1]}")
+                    print(f"First and 2bw-1'th element {samp_bank[lev, 0]}, {samp_bank[lev, upper-2]}")
+                if lev==0:
+                    samp_bank[lev, samp_ptr[lev] + upper - 1] = tot
+                else:
+                    print(f"dot product for lev {lev}")
+                    print(f"lev {lev-1} starting {quo}-{cbop} = {quo - cbop}")
+                    print(f"setting {samp_ptr[lev]}")
+                    tot += osamp_coeffs[rem, :]@samp_bank[lev - 1, quo - cbop : quo - cbop + upper]
+                    samp_bank[lev, samp_ptr[lev]] = tot
+                NUM_PTR-=1 #pop
+            
 
 @nb.njit(nogil=True)
 def generate_rand(n, sigma):
@@ -220,7 +233,7 @@ osamp_coeffs = (
     h[:-1].reshape(-1, up).T[:, ::-1].copy()
 )  # refer to notes. (last column is h[0], h[1], h[2]. h[3])
 
-nlevels = 4
+nlevels = 3
 
 rand_bank = np.zeros(
     (nlevels, krig_len), dtype="float64"
@@ -265,7 +278,9 @@ for ll in range(1, nlevels - 1):
             @ samp_bank[ll - 1, ctr[ll - 1] : ctr[ll - 1] + 2 * bw]
         )
         krig_ptr[ll] += 1
-sys.exit()
+samp_ptr[:]=krig_bank_size-1
+print(samp_ptr)
+# sys.exit()
 # print("ctrs",ctr)
 # # plot_spectra(samp_bank[1,:],2048)
 # # plot_spectra(samp_bank[2,:],2048)
@@ -279,7 +294,7 @@ sys.exit()
 # spec[:]=spec/navg
 
 yy = generate(
-    2 * 10 ** (nlevels + 4),
+    2000,
     bank,
     samp_bank,
     rand_bank,
@@ -294,7 +309,7 @@ yy = generate(
     samp_bank_size,
     krig_len,
 )
-plot_spectra(yy[1:], 20000)
+# plot_spectra(yy[1:], 20000)
 # plt.loglog(spec)
 # plt.show()
 
