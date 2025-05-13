@@ -4,7 +4,7 @@ from scipy.linalg import toeplitz
 from scipy.special import sici
 import time
 import os
-os.environ['NUMBA_OPT']='0'
+os.environ['NUMBA_OPT']='3'
 os.environ['NUMBA_GDB_BINARY']='/usr/bin/gdb'
 # os.environ['NUMBA_DEBUG']='1'
 # os.environ['NUMBA_FULL_TRACEBACKS']='1'
@@ -140,7 +140,7 @@ def generate(
             # make sure we have enough room left in circular buffer
             # print(f"krig ptr of lev {lev} at {krig_ptr[lev]}")
             if krig_ptr[lev] == krig_bank_size:
-            #     # print(f"regenerating krig for lev {lev}")
+                # print(f"regenerating krig for lev {lev}")
                 noise = sigma*np.random.randn(krig_bank_size + krig_len) #generate bigger
                 noise[:krig_len] = rand_bank[lev,:] #then replace first krig_len with stored last randn
                 rand_bank[lev,:] = noise[-krig_len:] #store the last krig_len noise for next generation
@@ -148,13 +148,12 @@ def generate(
                 c2r(hf*np.fft.rfft(noise),krig_bank[lev,:],np.asarray([0,],dtype='int64'),False,norm,16)
                 krig_ptr[lev] = 0
             tot = krig_bank[lev, krig_len+krig_ptr[lev]]+osamp_coeffs[rem, :]@samp_bank[lev - 1, quo - cbop : quo - cbop + upper]
-            krig_ptr[lev]+=1
             if lev == nlevels-1:
-                if pt == n: break
                 # print("adding pt + 1 to stack")
                 # print(f"dot product for lev {lev}")
                 # print(f"lev {lev-1} starting {quo}-{cbop} = {quo - cbop}")
                 y[pt] = tot
+                if pt == n-1: break
                 # NUM_PTR+=1 #pop and push combined
                 LEV_STACK[NUM_PTR]=nlevels-1
                 NUM_STACK[NUM_PTR]=pt+1
@@ -172,6 +171,7 @@ def generate(
                 # print(f"lev {lev-1} starting {quo}-{cbop} = {quo - cbop}")
                 samp_bank[lev, samp_ptr[lev]] = tot
                 NUM_PTR-=1 #pop
+            krig_ptr[lev]+=1
         # print("-----------------------------------------------------------")
     return y
 @nb.njit(nogil=True)
@@ -240,7 +240,7 @@ delta[0] = 1
 fir = get_impulse(delta, coeffs)  # size of krig coeffs can be different, don't matter.
 # plt.plot(fir)
 # plt.show()
-krig_bank_size = 2000000
+krig_bank_size = 20000
 hf = np.fft.rfft(np.hstack([fir, np.zeros(krig_bank_size)]))  # transfer function
 # hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size+200)])) #transfer function + 200 for manual osamp later
 # design a filter to replace osamp_coeffs
@@ -311,27 +311,30 @@ for ll in range(1, nlevels):
         )
         krig_ptr[ll] += 1
 samp_ptr[:]=krig_bank_size-1
+samp_ptr[-1]=123456
+krig_ptr[-1]=0
+krig_ptr[0]=krig_bank_size
 print(krig_ptr)
-# plot_spectra(samp_bank[2,:], 2000)
-plt.plot(np.cumsum(samp_bank[2,:]))
-plt.show()
-sys.exit()
+# # plot_spectra(samp_bank[2,:], 2000)
+# plt.plot(np.cumsum(samp_bank[2,:]))
+# plt.show()
+# sys.exit()
 # print(samp_ptr)
 # sys.exit()
 # print("ctrs",ctr)
 # # plot_spectra(samp_bank[1,:],2048)
 # # plot_spectra(samp_bank[2,:],2048)
-navg=500
-spec=np.zeros(10**nlevels+1,dtype='float64')
-for i in range(navg):
-    yy=generate(2*10**nlevels, bank,samp_bank,rand_bank,nlevels,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len)
-    spec[:] += np.abs(np.fft.rfft(yy))**2
-    print(samp_ptr)
-    # square_add(np.fft.rfft(yy),spec)
-    print("done",i)
-spec[:]=spec/navg
-plt.loglog(spec)
-plt.show()
+# navg=2
+# spec=np.zeros(10**nlevels+1,dtype='float64')
+# for i in range(navg):
+#     yy=generate(2*10**nlevels, bank,samp_bank,rand_bank,nlevels,osamp_coeffs,krig_ptr,samp_ptr,hf,sigma,bw, krig_bank_size, samp_bank_size, krig_len, i*2000)
+#     spec[:] += np.abs(np.fft.rfft(yy))**2
+#     print(samp_ptr)
+#     # square_add(np.fft.rfft(yy),spec)
+#     print("done",i)
+# spec[:]=spec/navg
+# plt.loglog(spec)
+# plt.show()
 # sys.exit()
 
 yy = generate(
@@ -350,10 +353,14 @@ yy = generate(
     samp_bank_size,
     krig_len,
 )
+# print(samp_ptr)
+# print(krig_ptr)
 plot_spectra(yy, 2000)
 
-# plt.plot(np.cumsum(yy))
-# plt.show()
+# print(yy-samp_bank[2,:])
+plt.title(f"CUMSUM of {nlevels} decades, 2M points")
+plt.plot(np.cumsum(yy))
+plt.show()
 
 
 sys.exit()
