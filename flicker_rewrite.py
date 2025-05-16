@@ -6,6 +6,8 @@ import time
 import os
 os.environ['NUMBA_OPT']='3'
 os.environ['NUMBA_GDB_BINARY']='/usr/bin/gdb'
+os.environ['NUMBA_LOOP_VECTORIZE']='1'
+os.environ['NUMBA_ENABLE_AVX']='1'
 # os.environ['NUMBA_DEBUG']='1'
 # os.environ['NUMBA_FULL_TRACEBACKS']='1'
 
@@ -174,6 +176,96 @@ def generate(
             krig_ptr[lev]+=1
         # print("-----------------------------------------------------------")
     return y
+
+@nb.njit(nogil=True,cache=True)
+# @nb.njit(debug=True)
+def generate2(
+    n,
+    krig_bank,
+    samp_bank,
+    rand_bank,
+    nlevels,
+    osamp_coeffs,
+    krig_ptr,
+    samp_ptr,
+    hf,
+    sigma,
+    bw,
+    krig_bank_size,
+    samp_bank_size,
+    krig_len,
+):
+    NUM_STACK = np.zeros(
+        nlevels + 1, dtype="int64"
+    )  # recursion stack should not exceed number of levels but still +1 for good luck
+    LEV_STACK = np.zeros(nlevels + 1, dtype="int64")
+    NUM_STACK[0] = 0
+    LEV_STACK[0] = nlevels - 1
+    circular_buffer_offsets = np.zeros(nlevels,dtype='int64')
+    y = np.zeros(
+        n, dtype="float64"
+    )  # we have krig_bank_size values already from forward generation
+    NUM_PTR = 0
+    norm = 1 / (krig_bank_size + krig_len)
+    upper = 2 * bw
+    up = osamp_coeffs.shape[0]
+    # nb.gdb_init()
+    while NUM_PTR >= 0:
+        # peek
+        lev = LEV_STACK[NUM_PTR]
+        pt = NUM_STACK[NUM_PTR]
+        quo = pt // up
+        rem = pt % up
+        cbop = circular_buffer_offsets[lev - 1]
+        # print(f"lev {lev} pt {pt} quo {quo} rem {rem} cbo of prev lev {cbop}")
+        # if this level doesn't have enough krig vals left, regenerate
+        if krig_ptr[lev] == krig_bank_size:
+            # print(f"regenerating krig for lev {lev}")
+            noise = sigma*np.random.randn(krig_bank_size + krig_len) #generate bigger
+            noise[:krig_len] = rand_bank[lev,:] #then replace first krig_len with stored last randn
+            rand_bank[lev,:] = noise[-krig_len:] #store the last krig_len noise for next generation
+        #     # np.fft.irfft(hf*np.fft.rfft(noise),out=bank[lev,:])
+            c2r(hf*np.fft.rfft(noise),krig_bank[lev,:],np.asarray([0,],dtype='int64'),False,norm,16)
+            krig_ptr[lev] = 0
+        # check visited status
+        if lev > 0 and ((quo + upper - 1) > (samp_ptr[lev - 1] + cbop)): #keep checking ahead
+            # print(f"checking quo+upper {quo+upper -1} > {samp_ptr[lev-1]+cbop}")
+            # parent hasn't been visted yet
+            # push
+            NUM_PTR += 1
+            LEV_STACK[NUM_PTR] = lev - 1
+            NUM_STACK[NUM_PTR] = quo + upper - 1
+            samp_ptr[lev-1] += 1
+            continue
+        
+        tot = krig_bank[lev, krig_len+krig_ptr[lev]]
+        if lev > 0:
+            tot += osamp_coeffs[rem, :]@samp_bank[lev - 1, quo - cbop : quo - cbop + upper]
+        krig_ptr[lev]+=1
+
+        if lev == nlevels-1:
+            # print("adding pt + 1 to stack")
+            # print(f"dot product for lev {lev}")
+            # print(f"lev {lev-1} starting {quo}-{cbop} = {quo - cbop}")
+            y[pt] = tot
+            if pt == n-1: 
+                print("final stack ptr at", NUM_PTR)
+                break
+            # NUM_PTR+=1 #pop and push combined
+            LEV_STACK[NUM_PTR]=nlevels-1
+            NUM_STACK[NUM_PTR]=pt+1
+        else:
+            if samp_ptr[lev] > krig_bank_size-1:
+                circular_buffer_offsets[lev] = pt - upper + 1
+                # print(f"cbo for lev {lev} set to {circular_buffer_offsets[lev]}")
+                samp_ptr[lev] = upper - 1 #this just indicates the tail of moving window; point is INCLUDED
+                # print("the first point is now,", np.arange(0,200)[-upper+1])
+                samp_bank[lev, : upper - 1] = samp_bank[lev, -upper + 1 :]
+            samp_bank[lev, samp_ptr[lev]] = tot
+            NUM_PTR-=1 #pop
+        # print("-----------------------------------------------------------")
+    return y
+
 @nb.njit(nogil=True)
 def generate_rand(n, sigma):
     y = sigma * np.random.randn(n)
@@ -213,7 +305,7 @@ del tt2
 
 up = 10
 f2 = 1 / 2
-f1 = 0.995 * f2 / up
+f1 = 0.993 * f2 / up
 # f1=f2/up
 N = 2 * 1000
 # ps=np.zeros(N//2+1,dtype='complex128')
@@ -240,13 +332,13 @@ delta[0] = 1
 fir = get_impulse(delta, coeffs)  # size of krig coeffs can be different, don't matter.
 # plt.plot(fir)
 # plt.show()
-krig_bank_size = 20000
+krig_bank_size = 63*1024
 hf = np.fft.rfft(np.hstack([fir, np.zeros(krig_bank_size)]))  # transfer function
 # hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size+200)])) #transfer function + 200 for manual osamp later
 # design a filter to replace osamp_coeffs
 import upsample_poly as upsamp
 
-half_size = 50
+half_size = 32
 bw = half_size
 h = up * firwin(2 * half_size * up + 1, 1 / up, window=("kaiser", 1))
 # print("len h", len(h))
@@ -265,7 +357,7 @@ osamp_coeffs = (
     h[:-1].reshape(-1, up).T[:, ::-1].copy()
 )  # refer to notes. (last column is h[0], h[1], h[2]. h[3])
 
-nlevels = 3
+nlevels = 4
 
 rand_bank = np.zeros(
     (nlevels, krig_len), dtype="float64"
@@ -310,8 +402,8 @@ for ll in range(1, nlevels):
             @ samp_bank[ll - 1, ctr[ll - 1] : ctr[ll - 1] + 2 * bw]
         )
         krig_ptr[ll] += 1
-samp_ptr[:]=krig_bank_size-1
-samp_ptr[-1]=123456
+samp_ptr[:]=krig_bank_size-1 #rolling pointer that tracks the end of the 2*bw window
+samp_ptr[-1]=123456 #test value to make sure final level's ptr is not touched.
 krig_ptr[-1]=0
 krig_ptr[0]=krig_bank_size
 print(krig_ptr)
@@ -336,9 +428,9 @@ print(krig_ptr)
 # plt.loglog(spec)
 # plt.show()
 # sys.exit()
-
-yy = generate(
-    2000000,
+t1=time.time()
+yy = generate2(
+    20000,
     bank,
     samp_bank,
     rand_bank,
@@ -353,9 +445,13 @@ yy = generate(
     samp_bank_size,
     krig_len,
 )
+t2=time.time()
+print("time takne", (t2-t1)/20000000)
 # print(samp_ptr)
 # print(krig_ptr)
-plot_spectra(yy, 2000)
+plt.loglog(np.abs(np.fft.rfft(yy)))
+plt.show()
+plot_spectra(yy, 20000)
 
 # print(yy-samp_bank[2,:])
 plt.title(f"CUMSUM of {nlevels} decades, 2M points")
