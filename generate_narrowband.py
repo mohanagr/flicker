@@ -12,6 +12,7 @@ import sys
 from upsample_poly import big_interp_c
 from scipy.interpolate import CubicSpline, splrep, splev
 import os
+import pfb
 os.environ['NUMBA_OPT']='3'
 os.environ['NUMBA_LOOP_VECTORIZE']='1'
 os.environ['NUMBA_ENABLE_AVX']='1'
@@ -152,6 +153,10 @@ ybig = re.ybig * np.cos(2*np.pi*carrier*t_orig) - im.ybig * np.sin(2*np.pi*carri
 # ybig2 = cubic_spline(t_new, t_orig, ybig)
 ybig2 = cubic_spline(t_new, t_orig, re.ybig) * np.cos(2*np.pi*carrier*t_new) - cubic_spline(t_new, t_orig, im.ybig) * np.sin(2*np.pi*carrier*t_new)
 
+obj1=pfb.PFB(tsize=len(ybig))
+obj2=pfb.PFB(tsize=len(ybig))
+obj1.pfb(ybig)
+obj2.pfb(ybig2)
 # cs = make_interp_spline(t_orig,ybig,k=3)
 # ybig2 = cs(t_new)
 #new fractional bandwidth is df/L after upsampling so df/L * 20000 = 80
@@ -166,6 +171,14 @@ f2=np.fft.rfft(ybig2.reshape(-1,20000),axis=1)
 # plt.loglog(np.abs(f2))
 # plt.show()
 xc=f1*np.conj(f2)
+print(xc.shape)
+xc=np.mean(xc,axis=0)
+plt.plot(np.abs(xc)[0:])
+plt.show()
+plt.plot(np.angle(xc)[0:])
+plt.show()
+
+xc=obj1.spectra*np.conj(obj2.spectra)
 print(xc.shape)
 xc=np.mean(xc,axis=0)
 plt.plot(np.abs(xc)[0:])

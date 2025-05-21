@@ -25,8 +25,6 @@ lib.get_osamp_polyphase.argtypes = [
 ]
 lib.get_osamp_polyphase.restype = None
 
-
-
      
 @nb.njit(cache=True)
 def interp_poly(x,h,L,y):
