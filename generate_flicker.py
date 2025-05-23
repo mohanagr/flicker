@@ -337,27 +337,27 @@ if __name__ == "__main__":
     up = 10
     f2 = 1 / 2
     f1 = 0.993 * f2 / up
-    nsamp=20000
+    nsamp=2048*500
     clock = flicker(nlevels, nsamp, f1, f2)
     clock.generate()
-    plt.loglog(np.abs(np.fft.rfft(clock.ybig)))
-    plt.show()
-    navg=100
-    spec=np.zeros(10**nlevels+1,dtype='float64')
-    for i in range(navg):
-        clock = flicker(nlevels, nsamp, f1, f2)
-        clock.generate()
-        spec[:] += np.abs(np.fft.rfft(clock.ybig))**2
-        # print(samp_ptr)
-        # square_add(np.fft.rfft(yy),spec)
-        print("done",i)
-    spec[:]=spec/navg
-    plt.loglog(spec)
-    plt.show()
+    # plt.loglog(np.abs(np.fft.rfft(clock.ybig)))
+    # plt.show()
+    # navg=100
+    # spec=np.zeros(10**nlevels+1,dtype='float64')
+    # for i in range(navg):
+    #     clock = flicker(nlevels, nsamp, f1, f2)
+    #     clock.generate()
+    #     spec[:] += np.abs(np.fft.rfft(clock.ybig))**2
+    #     # print(samp_ptr)
+    #     # square_add(np.fft.rfft(yy),spec)
+    #     print("done",i)
+    # spec[:]=spec/navg
+    # plt.loglog(spec)
+    # plt.show()
 
     # clock.generate()
 
-    # plt.title(f"CUMSUM of {nlevels} decades, 2M points")
-    # plt.plot(np.cumsum(clock.ybig))
-    # plt.show()
+    plt.title(f"CUMSUM of {nlevels} decades, 2M points")
+    plt.plot(np.cumsum(clock.ybig))
+    plt.show()
 
