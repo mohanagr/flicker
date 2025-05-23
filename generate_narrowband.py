@@ -41,9 +41,9 @@ class narrowband():
         sigma = np.sqrt(C[0,0]-vec@Cinv@vec.T)
         print("krig stddev", sigma)
         self.sigma = sigma
-        L=100 #upsample fastest if L is a multiple of 4 due to AVX2 being enabled.
+        L=1000 #upsample fastest if L is a multiple of 4 due to AVX2 being enabled.
         bw=32
-        krig_bank_size = 20000 + bw
+        krig_bank_size = 20480 + bw
         self.bw=bw
         self.krig_len = krig_len
         self.L = L
@@ -68,7 +68,7 @@ class narrowband():
     
     def get_acf(self,tau,df):
         y = np.sinc(df*tau)
-        y[0]+=1e-6
+        y[0]+=1
         return y
 
     def get_impulse(self, x,coeffs):
@@ -128,6 +128,13 @@ def cubic_spline(xnew, x, y, out=None):
     spline_eval(xnew, ynew, x, coeffs)
     return ynew
 
+@nb.njit(parallel=True,cache=True)
+def upconvert_delay_noise(y,I,Q,t,freq,sigma):
+    nn=len(y)
+    noise = np.random.randn(nn)
+    for i in nb.prange(nn):
+        y[i] = I[i]*np.cos(2*np.pi*freq*t[i]) - Q[i]*np.sin(2*np.pi*freq*t[i]) + sigma*noise[i]
+
 #verify osampling for both I and Q
 # fractional bandwidth 0.4 is two sided. For a zero-centered signal, 0.4*N/2 on +ve and rest on -ve freqs.
 # but when you upconvert total bw is 0.4*N
@@ -136,33 +143,43 @@ im=narrowband(df=0.4)
 re.generate().osamp()
 im.generate().osamp()
 
-plt.loglog(np.abs(np.fft.rfft(re.bank[re.krig_len:-re.bw]))) #get 20000
-plt.loglog(np.abs(np.fft.rfft(re.ybig))) #get 20000
-plt.show()
+# plt.loglog(np.abs(np.fft.rfft(re.bank[re.krig_len:-re.bw]))) #get 20000
+# plt.loglog(np.abs(np.fft.rfft(re.ybig))) #get 20000
+# plt.show()
 
-plt.loglog(np.abs(np.fft.rfft(im.bank[im.krig_len:-im.bw]))) #get 20000
-plt.loglog(np.abs(np.fft.rfft(im.ybig))) #get 20000
-plt.show()
+# plt.loglog(np.abs(np.fft.rfft(im.bank[im.krig_len:-im.bw]))) #get 20000
+# plt.loglog(np.abs(np.fft.rfft(im.ybig))) #get 20000
+# plt.show()
 
 from scipy.interpolate import CubicSpline, make_interp_spline
 t_orig=np.arange(len(re.ybig))
 t_new=np.arange(len(re.ybig)) - 1.5
 
 carrier = 0.3 #this is now for the oversampled one
-ybig = re.ybig * np.cos(2*np.pi*carrier*t_orig) - im.ybig * np.sin(2*np.pi*carrier*t_orig)
+ybig = np.empty(len(t_orig),dtype='float64')
+ybig2 = np.empty(len(t_orig),dtype='float64')
+# ybig = re.ybig * np.cos(2*np.pi*carrier*t_orig) - im.ybig * np.sin(2*np.pi*carrier*t_orig)
+print("udn 1")
+delay=np.zeros(len(ybig),dtype='float64')
+upconvert_delay_noise(ybig,re.ybig,im.ybig,t_orig,carrier,0.1)
+print("delay I and Q")
+I=cubic_spline(t_new, t_orig, re.ybig)
+Q=cubic_spline(t_new, t_orig, im.ybig)
 # ybig2 = cubic_spline(t_new, t_orig, ybig)
-ybig2 = cubic_spline(t_new, t_orig, re.ybig) * np.cos(2*np.pi*carrier*t_new) - cubic_spline(t_new, t_orig, im.ybig) * np.sin(2*np.pi*carrier*t_new)
+# ybig2 = cubic_spline(t_new, t_orig, re.ybig) * np.cos(2*np.pi*carrier*t_new) - cubic_spline(t_new, t_orig, im.ybig) * np.sin(2*np.pi*carrier*t_new)
+print("udn 2")
+upconvert_delay_noise(ybig2,I,Q,t_new,carrier,0.1)
 
-obj1=pfb.PFB(tsize=len(ybig))
-obj2=pfb.PFB(tsize=len(ybig))
+obj1=pfb.StreamingPFB(tsize=len(ybig))
+obj2=pfb.StreamingPFB(tsize=len(ybig))
 obj1.pfb(ybig)
 obj2.pfb(ybig2)
 # cs = make_interp_spline(t_orig,ybig,k=3)
 # ybig2 = cs(t_new)
 #new fractional bandwidth is df/L after upsampling so df/L * 20000 = 80
 print(ybig.shape, ybig2.shape)
-f1=np.fft.rfft(ybig.reshape(-1,20000),axis=1)
-f2=np.fft.rfft(ybig2.reshape(-1,20000),axis=1)
+f1=np.fft.rfft(ybig.reshape(-1,4096),axis=1)
+f2=np.fft.rfft(ybig2.reshape(-1,4096),axis=1)
 # f1 = np.fft.rfft(ybig)
 # plt.loglog(np.abs(f1))
 # plt.show()
