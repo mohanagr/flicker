@@ -224,8 +224,9 @@ class flicker:
 
             # first len(fir) is garbage. after len(fir), krig timestream continues.
 
-            h = up * firwin(2 * bw * up + 1, 1 / up, window=("kaiser", 1))
-            self.osamp_coeffs = h[:-1].reshape(-1, up).T[:, ::-1].copy()
+            self.h = firwin(2 * bw * up + 1, 1 / up, window=("kaiser", 1))
+            
+            self.osamp_coeffs = self.h[:-1].reshape(-1, up).T[:, ::-1].copy()
             self.samp_bank = np.zeros(
                 (nlevels, krig_bank_size), dtype=self.krig_bank.dtype
             )  # krig + white bank
@@ -333,13 +334,18 @@ class flicker:
 
 if __name__ == "__main__":
 
-    nlevels=4
+    nlevels=2
     up = 10
     f2 = 1 / 2
     f1 = 0.993 * f2 / up
-    nsamp=2048*500
+    # nsamp=2048*500
+    nsamp=20000000
+    
     clock = flicker(nlevels, nsamp, f1, f2)
     clock.generate()
+    plt.loglog(np.abs(np.fft.rfft(clock.h)))
+    plt.show()
+    plot_spectra(clock.ybig,20000)
     # plt.loglog(np.abs(np.fft.rfft(clock.ybig)))
     # plt.show()
     # navg=100
@@ -357,7 +363,7 @@ if __name__ == "__main__":
 
     # clock.generate()
 
-    plt.title(f"CUMSUM of {nlevels} decades, 2M points")
-    plt.plot(np.cumsum(clock.ybig))
-    plt.show()
+    # plt.title(f"CUMSUM of {nlevels} decades, 2M points")
+    # plt.plot(np.cumsum(clock.ybig))
+    # plt.show()
 

@@ -332,7 +332,7 @@ delta[0] = 1
 fir = get_impulse(delta, coeffs)  # size of krig coeffs can be different, don't matter.
 # plt.plot(fir)
 # plt.show()
-krig_bank_size = 63*1024
+krig_bank_size = 200000
 hf = np.fft.rfft(np.hstack([fir, np.zeros(krig_bank_size)]))  # transfer function
 # hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size+200)])) #transfer function + 200 for manual osamp later
 # design a filter to replace osamp_coeffs
@@ -340,7 +340,10 @@ import upsample_poly as upsamp
 
 half_size = 32
 bw = half_size
-h = up * firwin(2 * half_size * up + 1, 1 / up, window=("kaiser", 1))
+h = firwin(2 * half_size * up + 1, 1 / up, window=("kaiser", 1),scale=True)
+# plt.plot(h)
+# plt.show()
+# sys.exit()
 # print("len h", len(h))
 # plt.title("Filter response function")
 # plt.plot(2*up*np.arange(0,len(h)//2+1)/len(h),np.abs(np.fft.rfft(h))**2)
@@ -357,7 +360,7 @@ osamp_coeffs = (
     h[:-1].reshape(-1, up).T[:, ::-1].copy()
 )  # refer to notes. (last column is h[0], h[1], h[2]. h[3])
 
-nlevels = 4
+nlevels = 2
 
 rand_bank = np.zeros(
     (nlevels, krig_len), dtype="float64"
@@ -407,7 +410,15 @@ samp_ptr[-1]=123456 #test value to make sure final level's ptr is not touched.
 krig_ptr[-1]=0
 krig_ptr[0]=krig_bank_size
 print(krig_ptr)
-# # plot_spectra(samp_bank[2,:], 2000)
+# y=np.zeros(krig_bank_size,dtype='float64')
+# y=resample_poly(samp_bank[0,:20000],up=10,down=1,window=('kaiser',1))
+y=upfirdn(h,samp_bank[0,:20000+2*bw],up=10)
+print("resample shape", y.shape)
+# osamp_lev0 = upsamp.big_interp(samp_bank[0,:20000+2*bw],h,10,y,bw)
+# plot_spectra(samp_bank[1,:], 2000)
+plot_spectra(samp_bank[0,:20000], 2000)
+plot_spectra(y, 2000)
+sys.exit()
 # plt.plot(np.cumsum(samp_bank[2,:]))
 # plt.show()
 # sys.exit()
