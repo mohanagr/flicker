@@ -3,11 +3,10 @@ from matplotlib import pyplot as plt
 from scipy.linalg import toeplitz
 from scipy.special import sici
 import time
-import numba as nb
 import sys
 from rocket_fft import c2r
 import concurrent.futures
-from scipy.signal import firwin
+from scipy.signal import firwin,welch
 import sys
 from upsample_poly import big_interp_c
 from scipy.interpolate import CubicSpline, splrep, splev
@@ -16,6 +15,23 @@ import pfb
 os.environ['NUMBA_OPT']='3'
 os.environ['NUMBA_LOOP_VECTORIZE']='1'
 os.environ['NUMBA_ENABLE_AVX']='1'
+
+import numba as nb
+
+def plot_spectra(y, size):
+    f, P = welch(y, nperseg=size, noverlap=size // 2)
+    spec = y.reshape(-1, size)
+    spec = np.mean(np.abs(np.fft.rfft(spec, axis=1)) ** 2, axis=0)
+    f = plt.gcf()
+    f.set_size_inches(10, 4)
+    plt.subplot(121)
+    plt.title("Stacked FFT PS")
+    plt.loglog(spec)
+    plt.subplot(122)
+    plt.title("Welch PS w/ windowing & overlap")
+    plt.loglog(P)
+    plt.tight_layout()
+    plt.show()
 
 # np.random.seed(42)
 @nb.njit(cache=True)
@@ -29,7 +45,7 @@ def gen_krig(bank, rand_bank, hf, sigma, krig_bank_size, krig_len):
     c2r(hf*np.fft.rfft(noise),bank[:],np.asarray([0,],dtype='int64'),False,norm,16)
 
 class narrowband():
-    def __init__(self, df):
+    def __init__(self, df,length=20480, up=10):
         coeff_len = 1024
         krig_len = 1024 #number of coeffs in the FIR filter
         acf_anl=self.get_acf(np.arange(0,coeff_len),df)
@@ -41,9 +57,9 @@ class narrowband():
         sigma = np.sqrt(C[0,0]-vec@Cinv@vec.T)
         print("krig stddev", sigma)
         self.sigma = sigma
-        L=1000 #upsample fastest if L is a multiple of 4 due to AVX2 being enabled.
+        L=up #upsample fastest if L is a multiple of 4 due to AVX2 being enabled.
         bw=32
-        krig_bank_size = 20480 + bw
+        krig_bank_size = length + bw
         self.bw=bw
         self.krig_len = krig_len
         self.L = L
@@ -65,10 +81,12 @@ class narrowband():
         # bw < krig_len
         
         self.h = firwin(L*2*bw+1,1/L,window=('kaiser', 10)) #oversampling filter
+
+        self.generate() #warm up run
     
     def get_acf(self,tau,df):
-        y = np.sinc(df*tau)
-        y[0]+=1
+        y = df*np.sinc(df*tau)
+        y[0]+=1e-6
         return y
 
     def get_impulse(self, x,coeffs):
@@ -135,72 +153,90 @@ def upconvert_delay_noise(y,I,Q,t,freq,sigma):
     for i in nb.prange(nn):
         y[i] = I[i]*np.cos(2*np.pi*freq*t[i]) - Q[i]*np.sin(2*np.pi*freq*t[i]) + sigma*noise[i]
 
-#verify osampling for both I and Q
-# fractional bandwidth 0.4 is two sided. For a zero-centered signal, 0.4*N/2 on +ve and rest on -ve freqs.
-# but when you upconvert total bw is 0.4*N
-re=narrowband(df=0.4) #conversion is 0.4 * N (0.4 is fraction of nyquist = N/2)
-im=narrowband(df=0.4)
-re.generate().osamp()
-im.generate().osamp()
+@nb.njit(parallel=True,cache=True)
+def get_delay(tnew,told,delay):
+    nn=len(tnew)
+    for i in nb.prange(nn):
+        tnew[i]=told[i]+delay[i]
 
-# plt.loglog(np.abs(np.fft.rfft(re.bank[re.krig_len:-re.bw]))) #get 20000
-# plt.loglog(np.abs(np.fft.rfft(re.ybig))) #get 20000
-# plt.show()
+if __name__ =='__main__':
 
-# plt.loglog(np.abs(np.fft.rfft(im.bank[im.krig_len:-im.bw]))) #get 20000
-# plt.loglog(np.abs(np.fft.rfft(im.ybig))) #get 20000
-# plt.show()
+    #verify osampling for both I and Q
+    # fractional bandwidth 0.4 is two sided. For a zero-centered signal, 0.4*N/2 on +ve and rest on -ve freqs.
+    # but when you upconvert total bw is 0.4*N
+    re=narrowband(df=0.4,up=100) #conversion is 0.4 * N (0.4 is fraction of nyquist = N/2)
+    im=narrowband(df=0.4,up=100) #can see phase clearly in PFB/FFT when up =100 (1000 is 250 MHz)
+    re.generate().osamp()
+    im.generate().osamp()
 
-from scipy.interpolate import CubicSpline, make_interp_spline
-t_orig=np.arange(len(re.ybig))
-t_new=np.arange(len(re.ybig)) - 1.5
+    # plot_spectra(re.bank[re.krig_len:re.krig_len+200000],2000)
 
-carrier = 0.3 #this is now for the oversampled one
-ybig = np.empty(len(t_orig),dtype='float64')
-ybig2 = np.empty(len(t_orig),dtype='float64')
-# ybig = re.ybig * np.cos(2*np.pi*carrier*t_orig) - im.ybig * np.sin(2*np.pi*carrier*t_orig)
-print("udn 1")
-delay=np.zeros(len(ybig),dtype='float64')
-upconvert_delay_noise(ybig,re.ybig,im.ybig,t_orig,carrier,0.1)
-print("delay I and Q")
-I=cubic_spline(t_new, t_orig, re.ybig)
-Q=cubic_spline(t_new, t_orig, im.ybig)
-# ybig2 = cubic_spline(t_new, t_orig, ybig)
-# ybig2 = cubic_spline(t_new, t_orig, re.ybig) * np.cos(2*np.pi*carrier*t_new) - cubic_spline(t_new, t_orig, im.ybig) * np.sin(2*np.pi*carrier*t_new)
-print("udn 2")
-upconvert_delay_noise(ybig2,I,Q,t_new,carrier,0.1)
+    # plt.loglog(np.abs(np.fft.rfft(re.bank[re.krig_len:re.krig_len+20000]))) #if 20k, scale will line up exactly
 
-obj1=pfb.StreamingPFB(tsize=len(ybig))
-obj2=pfb.StreamingPFB(tsize=len(ybig))
-obj1.pfb(ybig)
-obj2.pfb(ybig2)
-# cs = make_interp_spline(t_orig,ybig,k=3)
-# ybig2 = cs(t_new)
-#new fractional bandwidth is df/L after upsampling so df/L * 20000 = 80
-print(ybig.shape, ybig2.shape)
-f1=np.fft.rfft(ybig.reshape(-1,4096),axis=1)
-f2=np.fft.rfft(ybig2.reshape(-1,4096),axis=1)
-# f1 = np.fft.rfft(ybig)
-# plt.loglog(np.abs(f1))
-# plt.show()
-# f2 = np.fft.rfft(ybig2)
+    # plt.loglog(np.abs(np.fft.rfft(re.ybig[:200000])))
+    # plt.show()
+    # sys.exit()
 
-# plt.loglog(np.abs(f2))
-# plt.show()
-xc=f1*np.conj(f2)
-print(xc.shape)
-xc=np.mean(xc,axis=0)
-plt.plot(np.abs(xc)[0:])
-plt.show()
-plt.plot(np.angle(xc)[0:])
-plt.show()
+    # plt.loglog(np.abs(np.fft.rfft(re.bank[re.krig_len:-re.bw]))) #get 20000
+    # plt.loglog(np.abs(np.fft.rfft(re.ybig))) #get 20000
+    # plt.show()
 
-xc=obj1.spectra*np.conj(obj2.spectra)
-print(xc.shape)
-xc=np.mean(xc,axis=0)
-plt.plot(np.abs(xc)[0:])
-plt.show()
-plt.plot(np.angle(xc)[0:])
-plt.show()
-# plt.plot(np.angle(xc))
-# plt.xlim(0,4000) #signal will be present at 0.4/L * 10000
+    # plt.loglog(np.abs(np.fft.rfft(im.bank[im.krig_len:-im.bw]))) #get 20000
+    # plt.loglog(np.abs(np.fft.rfft(im.ybig))) #get 20000
+    # plt.show()
+
+    from scipy.interpolate import CubicSpline, make_interp_spline
+    t_orig=np.arange(len(re.ybig))
+    t_new=np.arange(len(re.ybig)) - 1.5
+
+    carrier = 0.3 #this is now for the oversampled one
+    ybig = np.empty(len(t_orig),dtype='float64')
+    ybig2 = np.empty(len(t_orig),dtype='float64')
+    # ybig = re.ybig * np.cos(2*np.pi*carrier*t_orig) - im.ybig * np.sin(2*np.pi*carrier*t_orig)
+    print("udn 1")
+    delay=np.zeros(len(ybig),dtype='float64')
+    upconvert_delay_noise(ybig,re.ybig,im.ybig,t_orig,carrier,0.1)
+    print("delay I and Q")
+    I=cubic_spline(t_new, t_orig, re.ybig)
+    Q=cubic_spline(t_new, t_orig, im.ybig)
+    # ybig2 = cubic_spline(t_new, t_orig, ybig)
+    # ybig2 = cubic_spline(t_new, t_orig, re.ybig) * np.cos(2*np.pi*carrier*t_new) - cubic_spline(t_new, t_orig, im.ybig) * np.sin(2*np.pi*carrier*t_new)
+    print("udn 2")
+    upconvert_delay_noise(ybig2,I,Q,t_new,carrier,0.1)
+
+    obj1=pfb.StreamingPFB(tsize=len(ybig))
+    obj2=pfb.StreamingPFB(tsize=len(ybig))
+    obj1.pfb(ybig)
+    obj2.pfb(ybig2)
+    # cs = make_interp_spline(t_orig,ybig,k=3)
+    # ybig2 = cs(t_new)
+    #new fractional bandwidth is df/L after upsampling so df/L * 20000 = 80
+    print(ybig.shape, ybig2.shape)
+    f1=np.fft.rfft(ybig.reshape(-1,8192),axis=1)
+    f2=np.fft.rfft(ybig2.reshape(-1,8192),axis=1)
+
+    # f1 = np.fft.rfft(ybig)
+    # plt.loglog(np.abs(f1))
+    # plt.show()
+    # f2 = np.fft.rfft(ybig2)
+
+    # plt.loglog(np.abs(f2))
+    # plt.show()
+    xc=f1*np.conj(f2)
+    print(xc.shape)
+    xc=np.mean(xc,axis=0)
+    print("std dev", np.std(np.real(xc)[:2000]))
+    plt.plot(np.abs(xc)[0:])
+    plt.show()
+    plt.plot(np.angle(xc)[0:])
+    plt.show()
+
+    xc=obj1.spectra*np.conj(obj2.spectra)
+    print(xc.shape)
+    xc=np.mean(xc,axis=0)
+    plt.plot(np.abs(xc)[0:])
+    plt.show()
+    plt.plot(np.angle(xc)[0:])
+    plt.show()
+    # plt.plot(np.angle(xc))
+    # plt.xlim(0,4000) #signal will be present at 0.4/L * 10000

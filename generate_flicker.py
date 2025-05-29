@@ -172,6 +172,11 @@ class flicker:
         if cache_file:
             pass
         else:
+            self.nlevels = nlevels
+            self.nsamp = nsamp
+            self.f1 = f1
+            self.f2 = f2
+            
             coeff_len = 1024
             krig_len = 1024  # number of coeffs in the FIR filter
             acf_anl = self.get_acf(np.arange(0, coeff_len), f1, f2)
@@ -186,13 +191,9 @@ class flicker:
             up = 10
             bw = 32
             krig_bank_size = 20000
-            self.nlevels = nlevels
-            self.nsamp = nsamp
-            self.f1 = f1
-            self.f2 = f2
-            self.bw = bw
             self.krig_len = krig_len
             self.up = up
+            self.bw = bw
             self.start_pt = 0
             self.krig_bank_size = krig_bank_size
             self.krig_bank = np.zeros(
@@ -224,7 +225,7 @@ class flicker:
 
             # first len(fir) is garbage. after len(fir), krig timestream continues.
 
-            self.h = firwin(2 * bw * up + 1, 1 / up, window=("kaiser", 1))
+            self.h = up*firwin(2 * bw * up + 1, 1 / up, window=("kaiser", 1))
             
             self.osamp_coeffs = self.h[:-1].reshape(-1, up).T[:, ::-1].copy()
             self.samp_bank = np.zeros(
@@ -251,7 +252,7 @@ class flicker:
         for ll in range(
             1, self.nlevels
         ):  # generating bottomost but it doesnt matter, we wont use it
-            print("processing level", ll, "parent", ll - 1)
+            # print("processing level", ll, "parent", ll - 1)
             for i in range(self.samp_bank.shape[1]):
                 krig_samp_own = self.krig_bank[ll, self.krig_len + self.krig_ptr[ll]]
                 if self.krig_ptr[ll] == self.krig_bank_size:
@@ -331,21 +332,28 @@ class flicker:
         self.start_pt += self.nsamp
         self.STACK[0,0]=self.nlevels-1
         self.STACK[0,1]=self.start_pt
+@nb.njit(cache=True)
+def cumsum(y,x,start,scale):
+    nn=len(y)
+    y[0] = x[0]*scale + start
+    for i in range(1,nn):
+        y[i]=x[i]*scale+y[i-1]
+    return y
 
 if __name__ == "__main__":
 
-    nlevels=2
+    nlevels=13
     up = 10
     f2 = 1 / 2
     f1 = 0.993 * f2 / up
     # nsamp=2048*500
-    nsamp=20000000
+    nsamp=2000000
     
     clock = flicker(nlevels, nsamp, f1, f2)
     clock.generate()
-    plt.loglog(np.abs(np.fft.rfft(clock.h)))
-    plt.show()
-    plot_spectra(clock.ybig,20000)
+    # plt.loglog(np.abs(np.fft.rfft(clock.h)))
+    # plt.show()
+    plot_spectra(clock.ybig,200000)
     # plt.loglog(np.abs(np.fft.rfft(clock.ybig)))
     # plt.show()
     # navg=100
@@ -362,8 +370,16 @@ if __name__ == "__main__":
     # plt.show()
 
     # clock.generate()
-
-    # plt.title(f"CUMSUM of {nlevels} decades, 2M points")
-    # plt.plot(np.cumsum(clock.ybig))
-    # plt.show()
+    csum=np.empty(nsamp,dtype='float64')
+    csum2 = np.cumsum(clock.ybig)*10**(-0.5*nlevels)
+    cumsum(csum,clock.ybig,0,10**(-clock.nlevels/2))
+    print(clock.ybig)
+    print(csum)
+    print(csum2)
+    plt.title(f"CUMSUM of {nlevels} decades, 2M points")
+    plt.plot(csum)
+    plt.show()
+    plt.title(f"CUMSUM of {nlevels} decades, 2M points")
+    plt.plot(csum2)
+    plt.show()
 
