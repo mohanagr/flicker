@@ -4,6 +4,7 @@ import generate_flicker as gf
 import pfb
 from matplotlib import pyplot as plt
 import time
+import numba as nb
 
 re=gn.narrowband(df=0.48,length=2048,up=1000) #conversion is 0.4 * N (0.4 is fraction of nyquist = N/2)
 im=gn.narrowband(df=0.48,length=2048,up=1000)
@@ -32,8 +33,19 @@ spectra1 = np.empty((nspec_per_run*niter,nchans),dtype='complex128')
 spectra2=spectra1.copy()
 delays = np.empty(nspec_per_run*niter,dtype=np.float64)
 # delays2 = np.empty(nsamp*niter,dtype=np.float64)
-delay = -5.5*np.ones(nsamp)
-tag='const_delay'
+# delay = -5.5*np.ones(nsamp)
+delay = np.zeros(nsamp)
+tag='drift_delay'
+3
+@nb.njit(parallel=True,cache=True)
+def apply_drift_delay(delay, t_new, t_orig, slope, offset):
+    nn=len(t_orig)
+    for i in nb.prange(nn):
+        delay[i] = slope*t_orig[i] + offset
+        t_new[i] = t_orig[i] + delay[i]
+
+offset=0
+slope=1/20e3/4096 #1 sample drift per 20k spectra
 try:
     for ii in range(niter):
         t1=time.time()
@@ -44,7 +56,9 @@ try:
         # start_delay=delay[-1]
         # delays2[ii*nsamp:(ii+1)*nsamp]=delay
         # print("first val of clock drift is", clock.ybig[0])
-        gn.get_delay(t_new,t_orig,delay)
+        # gn.get_delay(t_new,t_orig,delay)
+        offset=ii*nsamp*slope
+        apply_drift_delay(delay,t_new,t_orig,slope,offset)
         # plt.plot(t_new-t_orig)
         # plt.plot()
         # plt.show()
@@ -62,7 +76,7 @@ try:
         spectra1[ii*nspec_per_run:(ii+1)*nspec_per_run,:]=obj1.spectra[:,start_chan:start_chan+nchans]
         spectra2[ii*nspec_per_run:(ii+1)*nspec_per_run,:]=obj2.spectra[:,start_chan:start_chan+nchans]
         delays[ii*nspec_per_run:(ii+1)*nspec_per_run] = np.mean(np.reshape(delay,(-1,4096)),axis=1)
-        print(np.mean(np.reshape(delay,(-1,4096)),axis=1))
+        # print(np.mean(np.reshape(delay,(-1,4096)),axis=1))
         t2=time.time()
         print(ii, t2-t1)
         # xc=np.abs(obj1.spectra)**2#*np.conj(obj2.spectra)

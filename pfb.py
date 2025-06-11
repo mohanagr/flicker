@@ -44,6 +44,19 @@ def forward_pfb(timestream, nchan=2048, ntap=4, window=sinc_hanning):
 
     return spec
 
+def inverse_pfb(dat,ntap,window=sinc_hamming,thresh=0.0):
+    dd=np.fft.irfft(dat,axis=1)
+    win=window(ntap,dd.shape[1])
+    win=np.reshape(win,[ntap,len(win)//ntap])
+    mat=np.zeros(dd.shape,dtype=dd.dtype)
+    mat[:ntap,:]=win
+    matft=np.fft.rfft(mat,axis=0)
+    ddft=np.fft.rfft(dd,axis=0)
+    if thresh>0:
+        filt=np.abs(matft)**2/(thresh**2+np.abs(matft)**2)*(1+thresh**2)
+        ddft=ddft*filt
+    return np.fft.irfft(ddft/np.conj(matft),axis=0)
+
 # @nb.njit(parallel=True)
 # def forward_pfb(timestream, win=None, spectra=None, scratch=None,nchan=2049, ntap=4):
 #     lblock = 2*(nchan-1)
