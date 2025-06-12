@@ -308,10 +308,42 @@ f2 = 1 / 2
 f1 = 0.993 * f2 / up
 # f1=f2/up
 N = 2 * 1000
-# ps=np.zeros(N//2+1,dtype='complex128')
-# ps[int(f1*N):int(f2*N)+1]=1/np.arange(int(f1*N),int(f2*N)+1) #N/2 is the scaling factor to line the two PS up.
-# acf_dft=N*np.fft.irfft(ps)
-# acf_anl=get_acf(np.arange(0,N//2+1),f1,f2)
+
+acf_anl=get_acf(np.arange(0,N//2+1),f1,f2)
+Ndft=2*10
+ps=np.zeros(Ndft//2+1,dtype='complex128')
+ps[int(f1*Ndft):int(f2*Ndft)+1]=Ndft/np.arange(int(f1*Ndft),int(f2*Ndft)+1)
+f=plt.gcf()
+f.set_size_inches(12,4)
+plt.subplot(121)
+plt.title("Discrete PS")
+plt.loglog(np.arange(0,Ndft//2+1)/(Ndft//2), ps,marker='o',ls='',label='16-point FFT PS')
+Ndft=2*1000
+ps=np.zeros(Ndft//2+1,dtype='complex128')
+ps[int(f1*Ndft):int(f2*Ndft)+1]=Ndft/np.arange(int(f1*Ndft),int(f2*Ndft)+1)
+plt.title("Analytical PS")
+plt.loglog(np.arange(0,Ndft//2+1)/(Ndft//2), ps,c='orange',label='Analytical PS')
+plt.xlabel("Frequency (fraction of Nyquist)")
+plt.legend()
+
+plt.subplot(122)
+plt.title("Analytical vs Discrete correlation functions")
+Ndfts = np.asarray([100, 500])*2
+plt.plot(acf_anl,label='Analytical corrfunc',lw=2)
+markerstyle = ['o', 'd']
+markercolors = ['orange','yellow']
+for i,Ndft in enumerate(Ndfts):
+    ps=np.zeros(Ndft//2+1,dtype='complex128')
+    ps[int(f1*Ndft):int(f2*Ndft)+1]=1/np.arange(int(f1*Ndft),int(f2*Ndft)+1) #N/2 is the scaling factor to line the two PS up.
+    acf_dft=Ndft*np.fft.irfft(ps)
+    plt.plot(np.arange(Ndft)[::3], acf_dft[::3], label=f"FFT corrfunc N={Ndft}",ls='',marker=markerstyle[i],markersize=5, markeredgecolor='black',color=markercolors[i],markeredgewidth=1)
+plt.xlim(0,100)
+plt.xlabel("Time (sample number)")
+plt.legend()
+plt.tight_layout()
+plt.show()
+sys.exit()
+
 
 coeff_len = 2048
 krig_len = 2048
@@ -340,7 +372,7 @@ import upsample_poly as upsamp
 
 half_size = 32
 bw = half_size
-h = firwin(2 * half_size * up + 1, 1 / up, window=("kaiser", 1),scale=True)
+h = up* firwin(2 * half_size * up + 1, 1 / up, window=("kaiser", 1),scale=True)
 plt.loglog(np.abs(np.fft.rfft(h)))
 plt.show()
 # sys.exit()
@@ -412,13 +444,15 @@ krig_ptr[0]=krig_bank_size
 print(krig_ptr)
 # y=np.zeros(krig_bank_size,dtype='float64')
 # y=resample_poly(samp_bank[0,:20000],up=10,down=1,window=('kaiser',1))
-y=upfirdn(h,samp_bank[0,:20000+2*bw],up=10)
-print("resample shape", y.shape)
+
+# y=upfirdn(h,samp_bank[0,:20000+2*bw],up=10) #this was to test if scipy's filter also has that 1/sqrt(up) issue. yes, that's a plotting problem when using different length. normalize for different df
+# print("resample shape", y.shape)
 # osamp_lev0 = upsamp.big_interp(samp_bank[0,:20000+2*bw],h,10,y,bw)
+
 # plot_spectra(samp_bank[1,:], 2000)
-plot_spectra(samp_bank[0,:20000], 2000)
-plot_spectra(y[:200000], 2000)
-sys.exit()
+# plot_spectra(samp_bank[0,:20000], 2000)
+# plot_spectra(y[:200000], 2000)
+
 # plt.plot(np.cumsum(samp_bank[2,:]))
 # plt.show()
 # sys.exit()
@@ -457,54 +491,21 @@ yy = generate2(
     krig_len,
 )
 t2=time.time()
-print("time takne", (t2-t1)/20000000)
-# print(samp_ptr)
-# print(krig_ptr)
-plt.loglog(np.abs(np.fft.rfft(yy)))
-plt.show()
-plot_spectra(yy, 20000)
+print("time taken", (t2-t1)/20000000)
 
-# print(yy-samp_bank[2,:])
-plt.title(f"CUMSUM of {nlevels} decades, 2M points")
-plt.plot(np.cumsum(yy))
+plt.clf()
+f=plt.gcf()
+f.set_size_inches(10,4)
+plt.title('Zoomed-in noise')
+plt.plot(yy[:2000])
 plt.show()
 
+# plt.clf()
+# plt.loglog(np.abs(np.fft.rfft(yy)))
+# plt.show()
+# plot_spectra(yy, 20000)
 
-sys.exit()
-
-krig_bank_size = 20000 * 100
-hf = np.fft.rfft(np.hstack([fir, np.zeros(krig_bank_size + 4 * half_size)]))
-rn = sigma * np.random.randn(
-    len(fir) + krig_bank_size + 4 * half_size
-)  # extra hundred to make my oversampling easy
-yy = np.fft.irfft(np.fft.rfft(rn) * hf)[krig_len:]
-bigyy = np.zeros(krig_bank_size * up + 2 * half_size, dtype=yy.dtype)
-print("len yy", len(yy))
-
-upsamp.big_interp(yy, h, up, bigyy, half_size)
-
-print("len bigyy", len(bigyy))
-
-# plot_spectra(bigyy,2000)
-# print("done")
-
-# make some more and add to oversampled one
-hf = np.fft.rfft(np.hstack([fir, np.zeros(krig_bank_size * up + 2 * half_size)]))
-rn = sigma * np.random.randn(len(fir) + krig_bank_size * up + 2 * half_size)
-yy2 = np.fft.irfft(np.fft.rfft(rn) * hf)[krig_len:]
-
-yytot = bigyy + yy2
-
-bigyy2 = np.zeros(krig_bank_size * up, dtype=yy.dtype)
-
-upsamp.big_interp(yytot, h, up, bigyy2, half_size)
-
-hf = np.fft.rfft(np.hstack([fir, np.zeros(krig_bank_size * up)]))
-rn = sigma * np.random.randn(len(fir) + krig_bank_size * up)
-yy2 = np.fft.irfft(np.fft.rfft(rn) * hf)[krig_len:]
-
-yytot = bigyy2 + yy2
-# calc spectra again
-plot_spectra(yytot, 2000)
-# yytot = bigyy2 + yy2
-# plot_spectra(yytot,2000)
+# # print(yy-samp_bank[2,:])
+# plt.title(f"CUMSUM of {nlevels} decades, 2M points")
+# plt.plot(np.cumsum(yy))
+# plt.show()

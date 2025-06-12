@@ -342,18 +342,22 @@ def cumsum(y,x,start,scale):
 
 if __name__ == "__main__":
 
-    nlevels=13
+    nlevels=3
     up = 10
     f2 = 1 / 2
     f1 = 0.993 * f2 / up
     # nsamp=2048*500
-    nsamp=2000000
+    nsamp=20000
     
     clock = flicker(nlevels, nsamp, f1, f2)
     clock.generate()
     # plt.loglog(np.abs(np.fft.rfft(clock.h)))
     # plt.show()
-    plot_spectra(clock.ybig,200000)
+    plot_spectra(clock.ybig,2000)
+    plt.plot(np.cumsum(clock.ybig))
+    plt.show()
+    plt.plot(clock.ybig)
+    plt.show()
     # plt.loglog(np.abs(np.fft.rfft(clock.ybig)))
     # plt.show()
     # navg=100
