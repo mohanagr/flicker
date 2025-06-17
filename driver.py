@@ -35,7 +35,7 @@ delays = np.empty(nspec_per_run*niter,dtype=np.float64)
 # delays2 = np.empty(nsamp*niter,dtype=np.float64)
 # delay = -5.5*np.ones(nsamp)
 delay = np.zeros(nsamp)
-tag='drift_delay'
+tag='drift_delay2'
 3
 @nb.njit(parallel=True,cache=True)
 def apply_drift_delay(delay, t_new, t_orig, slope, offset):
@@ -45,7 +45,7 @@ def apply_drift_delay(delay, t_new, t_orig, slope, offset):
         t_new[i] = t_orig[i] + delay[i]
 
 offset=0
-slope=1/20e3/4096 #1 sample drift per 20k spectra
+slope=5/20e3/4096 #sample drift per 20k spectra
 try:
     for ii in range(niter):
         t1=time.time()

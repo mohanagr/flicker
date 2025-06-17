@@ -272,20 +272,27 @@ def generate_rand(n, sigma):
     return y
 
 
-def plot_spectra(y, size):
-    f, P = welch(y, nperseg=size, noverlap=size // 2)
+def plot_spectra(y, size,both=True):
     spec = y.reshape(-1, size)
     spec = np.mean(np.abs(np.fft.rfft(spec, axis=1)) ** 2, axis=0)
-    f = plt.gcf()
-    f.set_size_inches(10, 4)
-    plt.subplot(121)
-    plt.title("Stacked FFT PS")
-    plt.loglog(spec)
-    plt.subplot(122)
-    plt.title("Welch PS w/ windowing & overlap")
-    plt.loglog(P)
-    plt.tight_layout()
-    plt.show()
+    if both:
+        f, P = welch(y, nperseg=size, noverlap=size // 2)
+        f = plt.gcf()
+        f.set_size_inches(10, 4)
+        plt.subplot(121)
+        plt.title("Stacked FFT PS")
+        plt.loglog(spec)
+        plt.subplot(122)
+        plt.title("Welch PS w/ windowing & overlap")
+        plt.loglog(P)
+        plt.tight_layout()
+        plt.show()
+    else:
+        plt.title("Averaged Power Spectrum")
+        plt.loglog(np.arange(0,size//2+1)/(size//2),spec)
+        plt.xlabel("Frequency (fraction of nyquist)")
+        plt.show()
+
 
 
 @nb.njit(parallel=True, cache=True)
@@ -308,6 +315,8 @@ f2 = 1 / 2
 f1 = 0.993 * f2 / up
 # f1=f2/up
 N = 2 * 1000
+
+
 
 acf_anl=get_acf(np.arange(0,N//2+1),f1,f2)
 Ndft=2*10
@@ -342,7 +351,7 @@ plt.xlabel("Time (sample number)")
 plt.legend()
 plt.tight_layout()
 plt.show()
-sys.exit()
+
 
 
 coeff_len = 2048
@@ -357,13 +366,18 @@ vec = vec[::-1]
 coeffs = vec.T @ Cinv
 sigma = np.sqrt(C[0, 0] - vec @ Cinv @ vec.T)
 print("krig stddev", sigma)
-# plt.plot(coeffs)
-# plt.show()
+
+
+plt.show()
 delta = np.zeros(krig_len)
 delta[0] = 1
 fir = get_impulse(delta, coeffs)  # size of krig coeffs can be different, don't matter.
-# plt.plot(fir)
-# plt.show()
+
+plt.title("IIR impulse response")
+plt.plot(fir)
+plt.xlabel("Time (sample number)")
+plt.show()
+
 krig_bank_size = 200000
 hf = np.fft.rfft(np.hstack([fir, np.zeros(krig_bank_size)]))  # transfer function
 # hf = np.fft.rfft(np.hstack([fir,np.zeros(krig_bank_size+200)])) #transfer function + 200 for manual osamp later
@@ -373,7 +387,23 @@ import upsample_poly as upsamp
 half_size = 32
 bw = half_size
 h = up* firwin(2 * half_size * up + 1, 1 / up, window=("kaiser", 1),scale=True)
-plt.loglog(np.abs(np.fft.rfft(h)))
+
+f=plt.gcf()
+f.set_size_inches(10,4)
+plt.subplot(121)
+plt.title("Filter response")
+print(len(h))
+print(len(np.fft.rfft(h)))
+print(np.arange(len(h)//2+1)/(len(h)//2+1))
+plt.loglog(np.arange(len(h)//2+1)/(len(h)//2+1), np.abs(np.fft.rfft(firwin(2 * half_size * up + 1, 1 / up, window=("kaiser", 1),scale=True)))**2, label=r"Kaiser $\beta=1$")
+plt.loglog(np.arange(len(h)//2+1)/(len(h)//2+1), np.abs(np.fft.rfft(firwin(2 * half_size * up + 1, 1 / up, window=("kaiser", 16),scale=True)))**2, label=r"Kaiser $\beta=10$")
+plt.legend()
+plt.xlabel("Frequency (fraction of nyquist)")
+plt.subplot(122)
+plt.plot(np.arange(-len(h)//2,len(h)//2), h)
+plt.title(r"Filter coefficients Kaiser $\beta=1$")
+plt.xlabel("Sample number (m = 10*n)")
+plt.tight_layout()
 plt.show()
 # sys.exit()
 # print("len h", len(h))
@@ -442,16 +472,19 @@ samp_ptr[-1]=123456 #test value to make sure final level's ptr is not touched.
 krig_ptr[-1]=0
 krig_ptr[0]=krig_bank_size
 print(krig_ptr)
-# y=np.zeros(krig_bank_size,dtype='float64')
+y=np.zeros(krig_bank_size,dtype='float64')
 # y=resample_poly(samp_bank[0,:20000],up=10,down=1,window=('kaiser',1))
 
 # y=upfirdn(h,samp_bank[0,:20000+2*bw],up=10) #this was to test if scipy's filter also has that 1/sqrt(up) issue. yes, that's a plotting problem when using different length. normalize for different df
 # print("resample shape", y.shape)
-# osamp_lev0 = upsamp.big_interp(samp_bank[0,:20000+2*bw],h,10,y,bw)
+upsamp.big_interp(samp_bank[0,:20000+2*bw],h,10,y,bw)
 
 # plot_spectra(samp_bank[1,:], 2000)
-# plot_spectra(samp_bank[0,:20000], 2000)
-# plot_spectra(y[:200000], 2000)
+plot_spectra(samp_bank[0,:], 2000,both=False)
+plot_spectra(y[:200000], 2000,both=False)
+plot_spectra(samp_bank[1,:], 2000,both=False)
+
+
 
 # plt.plot(np.cumsum(samp_bank[2,:]))
 # plt.show()
@@ -475,7 +508,7 @@ print(krig_ptr)
 # sys.exit()
 t1=time.time()
 yy = generate2(
-    20000,
+    2000000,
     bank,
     samp_bank,
     rand_bank,
@@ -491,7 +524,38 @@ yy = generate2(
     krig_len,
 )
 t2=time.time()
-print("time taken", (t2-t1)/20000000)
+print("time taken", (t2-t1)/2000000)
+
+t1=time.time()
+yy = generate2(
+    2000000,
+    bank,
+    samp_bank,
+    rand_bank,
+    nlevels,
+    osamp_coeffs,
+    krig_ptr,
+    samp_ptr,
+    hf,
+    sigma,
+    bw,
+    krig_bank_size,
+    samp_bank_size,
+    krig_len,
+)
+t2=time.time()
+print("time taken", (t2-t1)/2000000)
+
+t1=time.time()
+generate_rand(2000000,2)
+t2=time.time()
+print("time taken", (t2-t1)/2000000)
+
+t1=time.time()
+generate_rand(2000000,2)
+t2=time.time()
+print("time taken", (t2-t1)/2000000)
+
 
 plt.clf()
 f=plt.gcf()
