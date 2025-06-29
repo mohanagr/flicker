@@ -35,7 +35,7 @@ delays = np.empty(nspec_per_run*niter,dtype=np.float64)
 # delays2 = np.empty(nsamp*niter,dtype=np.float64)
 # delay = -5.5*np.ones(nsamp)
 delay = np.zeros(nsamp)
-tag='drift_delay2'
+tag='clock_low_noise'
 3
 @nb.njit(parallel=True,cache=True)
 def apply_drift_delay(delay, t_new, t_orig, slope, offset):
@@ -51,14 +51,14 @@ try:
         t1=time.time()
         re.generate().osamp()
         im.generate().osamp()
-        # clock.generate()
-        # delay = gf.cumsum(csum,clock.ybig,start_delay,10**(-clock.nlevels/2))
-        # start_delay=delay[-1]
+        clock.generate()
+        delay = gf.cumsum(csum,clock.ybig,start_delay,10**(-clock.nlevels/2))
+        start_delay=delay[-1]
         # delays2[ii*nsamp:(ii+1)*nsamp]=delay
         # print("first val of clock drift is", clock.ybig[0])
-        # gn.get_delay(t_new,t_orig,delay)
-        offset=ii*nsamp*slope
-        apply_drift_delay(delay,t_new,t_orig,slope,offset)
+        gn.get_delay(t_new,t_orig,delay)
+        # offset=ii*nsamp*slope
+        # apply_drift_delay(delay,t_new,t_orig,slope,offset)
         # plt.plot(t_new-t_orig)
         # plt.plot()
         # plt.show()
@@ -66,10 +66,10 @@ try:
         
         I=re.ybig
         Q=im.ybig
-        gn.upconvert_delay_noise(ybig,I,Q,t_orig,carrier,0.05) #last argument is sigma of noise you wanna add
+        gn.upconvert_delay_noise(ybig,I,Q,t_orig,carrier,0.001) #last argument is sigma of noise you wanna add
         I=gn.cubic_spline(t_new, t_orig, re.ybig)
         Q=gn.cubic_spline(t_new, t_orig, im.ybig)
-        gn.upconvert_delay_noise(ybig2,I,Q,t_new,carrier,0.05)
+        gn.upconvert_delay_noise(ybig2,I,Q,t_new,carrier,0.001)
         obj1.pfb(ybig)
         obj2.pfb(ybig2)
         #save data
