@@ -5,7 +5,7 @@ __pycache__/
 *.out
 # C extensions
 *.so
-
+*.npz
 # Distribution / packaging
 .Python
 build/
