@@ -6,6 +6,8 @@ from matplotlib import pyplot as plt
 import time
 import numba as nb
 
+np.random.seed(42)
+
 re=gn.narrowband(df=0.48,length=2048,up=1000) #conversion is 0.4 * N (0.4 is fraction of nyquist = N/2)
 im=gn.narrowband(df=0.48,length=2048,up=1000)
 lblock=4096
@@ -26,7 +28,7 @@ ybig2 = np.empty(nsamp,dtype='float64')
 csum = np.empty(nsamp,dtype='float64')
 clock = gf.flicker(nlevels, nsamp, f1, f2)
 nspec_per_run = nsamp//4096
-niter=100
+niter=24000
 start_chan=1830
 nchans=10
 spectra1 = np.empty((nspec_per_run*niter,nchans),dtype='complex128')
@@ -35,8 +37,9 @@ delays = np.empty(nspec_per_run*niter,dtype=np.float64)
 # delays2 = np.empty(nsamp*niter,dtype=np.float64)
 # delay = -5.5*np.ones(nsamp)
 delay = np.zeros(nsamp)
-tag='clock_low_noise'
-3
+tag='clock_1overf_5e-9'
+delay[:] = 200.1
+
 @nb.njit(parallel=True,cache=True)
 def apply_drift_delay(delay, t_new, t_orig, slope, offset):
     nn=len(t_orig)
@@ -44,15 +47,21 @@ def apply_drift_delay(delay, t_new, t_orig, slope, offset):
         delay[i] = slope*t_orig[i] + offset
         t_new[i] = t_orig[i] + delay[i]
 
+sigma = 0.05
+
+#this is if you want to do a constant drift instead of noise
 offset=0
 slope=5/20e3/4096 #sample drift per 20k spectra
+#############################################################
+
 try:
     for ii in range(niter):
         t1=time.time()
         re.generate().osamp()
         im.generate().osamp()
         clock.generate()
-        delay = gf.cumsum(csum,clock.ybig,start_delay,10**(-clock.nlevels/2))
+        delay = gf.cumsum(csum,clock.ybig,start_delay,3e-9)
+        # delay = gf.cumsum_wnoise(csum,clock.ybig,start_delay,3e-20,3e-15) #this adds a random walk contribution. white noise is cumsummed
         start_delay=delay[-1]
         # delays2[ii*nsamp:(ii+1)*nsamp]=delay
         # print("first val of clock drift is", clock.ybig[0])
@@ -66,16 +75,16 @@ try:
         
         I=re.ybig
         Q=im.ybig
-        gn.upconvert_delay_noise(ybig,I,Q,t_orig,carrier,0.001) #last argument is sigma of noise you wanna add
+        gn.upconvert_delay_noise(ybig,I,Q,t_orig,carrier,sigma) #last argument is sigma of noise you wanna add
         I=gn.cubic_spline(t_new, t_orig, re.ybig)
         Q=gn.cubic_spline(t_new, t_orig, im.ybig)
-        gn.upconvert_delay_noise(ybig2,I,Q,t_new,carrier,0.001)
+        gn.upconvert_delay_noise(ybig2,I,Q,t_new,carrier,sigma)
         obj1.pfb(ybig)
         obj2.pfb(ybig2)
         #save data
         spectra1[ii*nspec_per_run:(ii+1)*nspec_per_run,:]=obj1.spectra[:,start_chan:start_chan+nchans]
         spectra2[ii*nspec_per_run:(ii+1)*nspec_per_run,:]=obj2.spectra[:,start_chan:start_chan+nchans]
-        delays[ii*nspec_per_run:(ii+1)*nspec_per_run] = np.mean(np.reshape(delay,(-1,4096)),axis=1)
+        delays[ii*nspec_per_run:(ii+1)*nspec_per_run] = np.mean(np.reshape(delay,(-1,4096)),axis=1) #one number per 4096 delay samples.
         # print(np.mean(np.reshape(delay,(-1,4096)),axis=1))
         t2=time.time()
         print(ii, t2-t1)
@@ -91,8 +100,7 @@ try:
 except Exception as e:
     pass
 finally:
-    np.savez(f"./spectra_{start_chan}_{start_chan+nchans}_{lblock}_{tag}.npz",spectra1=spectra1,spectra2=spectra2,delays=delays)
-
+    np.savez(f"./data/spectra_{start_chan}_{start_chan+nchans}_{lblock}_{ii+1}_{sigma}_{tag}.npz",spectra1=spectra1,spectra2=spectra2,delays=delays)
 
 
 

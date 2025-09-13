@@ -118,30 +118,74 @@ class StreamingPFB():
         self.scratch = np.empty((self.nblock, self.lblock), dtype="float64")
         self.timestream = np.zeros(tsize + rem, dtype="float64")
     def pfb(self, timestream):
+        #input timestream, fill spectra
+        #timestream = external timestream that is ONLY tsize long
         #may be JIT this thing too
         _fill(self.timestream[(self.ntap-1)*self.lblock:],timestream)
         # self.timestream[(self.ntap-1)*self.lblock:] = timestream #could be multithreaded
         _fpfb(self.timestream, self.win, self.spectra, self.scratch, self.nchan, self.ntap)
         _fill(self.timestream[:(self.ntap-1)*self.lblock],timestream[-(self.ntap-1)*self.lblock:])
         # self.timestream[:(self.ntap-1)*self.lblock] = timestream[-(self.ntap-1)*self.lblock:]
+
+class StreamingIPFB():
+    def __init__(self, nblock=100, lblock=4096, ntap=4, window='hamming', cut=10):
+        self.lblock = lblock
+        self.nblock = nblock
+        N = self.lblock * ntap
+        w = np.arange(0, N) - N // 2
+        self.win = np.__dict__[window](N) * np.sinc(w / self.lblock)
+        self.cut = cut
+        self.nchans=lblock//2+1
+        self.specbuf = np.empty((2*cut + nblock, self.nchans), dtype='complex128')
+        mat=np.zeros((2*cut + nblock, lblock),dtype="float64")
+        mat[:ntap,:]=np.reshape(self.win,[ntap,len(self.win)//ntap])
+        mat=mat.T.copy()
+        print("mat shape", mat.shape)
+        self.matft = np.fft.rfft(mat,axis=1)
+        print("matft shape", self.matft.shape)
+    
+    def ipfb(self, spectra, chans, thresh=0.):
+        #input spectra, fill timestream
+        self.specbuf[2*self.cut:, chans] = spectra
+        print(self.specbuf[0,1829:1842])
+        dd=np.fft.irfft(self.specbuf,axis=1)
+        print("dd shape", dd.shape)
+        self.specbuf[:2*self.cut, chans] = spectra[-2*self.cut:, :]
+        dd2=dd.T.copy()
+        ddft=np.fft.rfft(dd2,axis=1)
+        if thresh>0.:
+            filt=np.abs(self.matft)**2/(thresh**2+np.abs(self.matft)**2)*(1+thresh**2)
+            ddft=ddft*filt
+        out = np.fft.irfft(ddft/np.conj(self.matft),axis=1)
+        out = out.T.copy()[self.cut:-self.cut].ravel()
+        return out
         
 if __name__=='__main__':
-    nchan=2049
-    ntap=4
-    # timestream = np.cos(2*np.pi*1830.1*np.arange(0,2048*500)/4096)
-    timestream = np.random.randn(2048*500)
-    lblock = 2*(nchan-1)
-    nblock = timestream.size // lblock - (ntap - 1)
-    scratch = np.empty((nblock, lblock), dtype=timestream.dtype)
-    spectra = np.empty((nblock, nchan), dtype="complex128")
-    N = lblock * ntap
-    w = np.arange(0, N) - N // 2
-    win = np.hamming(N)*np.sinc(w / lblock)
-    f1 = forward_pfb(timestream,2048,4,sinc_hamming)
-    f2 = _fpfb(timestream,win,spectra,scratch,2049,4)
-    print(np.abs(f1-f2).sum())
-    print(f1.shape)
+    # nchan=2049
+    # ntap=4
+    # # timestream = np.cos(2*np.pi*1830.1*np.arange(0,2048*500)/4096)
+    # timestream = np.random.randn(2048*500)
+    # lblock = 2*(nchan-1)
+    # nblock = timestream.size // lblock - (ntap - 1)
+    # scratch = np.empty((nblock, lblock), dtype=timestream.dtype)
+    # spectra = np.empty((nblock, nchan), dtype="complex128")
+    # N = lblock * ntap
+    # w = np.arange(0, N) - N // 2
+    # win = np.hamming(N)*np.sinc(w / lblock)
+    # f1 = forward_pfb(timestream,2048,4,sinc_hamming)
+    # f2 = _fpfb(timestream,win,spectra,scratch,2049,4)
+    # print(np.abs(f1-f2).sum())
+    # print(f1.shape)
     # from matplotlib import pyplot as plt
     # plt.imshow(np.abs(f),aspect='auto',interpolation='none')
     # plt.colorbar()
     # plt.show()
+
+    spectra = np.random.randn(100*2049) + 1j*np.random.randn(100*2049)
+    spectra = spectra.reshape(100,-1)
+    print("spectra shape", spectra.shape)
+    ipfb =  StreamingIPFB(nblock=100)
+    print("final two rows of spec", spectra[-2*ipfb.cut:])
+    ts = ipfb.ipfb(spectra,thresh=0.1)
+    print("first two rows of specbuf", ipfb.specbuf[:2*ipfb.cut])
+    print(ts.shape)

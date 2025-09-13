@@ -340,6 +340,15 @@ def cumsum(y,x,start,scale):
         y[i]=x[i]*scale+y[i-1]
     return y
 
+@nb.njit(cache=True)
+def cumsum_wnoise(y,x,start,scale1,scale2):
+    nn=len(y)
+    rand=np.random.randn(nn)
+    y[0] = x[0]*scale1 + rand[0]*scale2 + start
+    for i in range(1,nn):
+        y[i]=x[i]*scale1 + rand[i]*scale2 + y[i-1]
+    return y
+
 if __name__ == "__main__":
 
     nlevels=3
