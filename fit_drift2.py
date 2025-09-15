@@ -128,7 +128,7 @@ if __name__ == '__main__':
         spec2=f['spectra2']
         delays=f['delays']
 
-    avglen=48000
+    avglen=3200
     # auto = np.abs(spec1[:,4:5])**2-np.abs(spec1[:,0:1])**2
     # auto_avg1 = average_rows(auto,nblock=avglen)
     # # auto = np.abs(spec2[:,4:5])**2-np.abs(spec2[:,0:1])**2
@@ -283,27 +283,29 @@ if __name__ == '__main__':
     plt.show()
     # sys.exit()
 
-    ph = np.angle(xc_avg_corrected[:,1])
+    channum = 5
+    ph = np.angle(xc_avg_corrected[:,channum])
     phdiff = np.diff(ph)
     howmany = np.where((np.abs(phdiff)<3.5)&(np.abs(phdiff)>np.pi))[0]
     print("Howmany in risky zone:", len(howmany))
     ph0 = np.unwrap(ph)-ph[0]
-
-    plt.title("delay residual wrt block 0")
-    plt.plot(np.angle(np.exp(-1j*ph0)),marker='*')
-    plt.plot(np.angle(np.exp(2j*np.pi*1834.1888*delays[::blocksize]/4096)),marker='o')
-    for h in howmany:
-        plt.axvline(h,c='black')
-    ax=plt.gca()
-    ax2=ax.twinx()
-    unwrapped_ph_noise = np.std(2*np.pi*1835*delays[::blocksize]/4096 + ph0)
-    print("unwraped phase noise", unwrapped_ph_noise)
-    sigma_tau = phase2timenoise(unwrapped_ph_noise, 2, 61e3)
-    print(f"expected slope noise : {sigma_tau/4e-9:5.3e} samp")
-    ax2.plot(unwrapped_ph_noise,c='red',marker='d')
+    plt.plot(ph0)
+    plt.show()
+    # plt.title("delay residual wrt block 0")
+    # plt.plot(np.angle(np.exp(-1j*ph0)),marker='*')
+    # plt.plot(np.angle(np.exp(2j*np.pi*new_channels[channum]*delays[::blocksize]/4096)),marker='o')
+    # for h in howmany:
+    #     plt.axvline(h,c='black')
+    # ax=plt.gca()
+    # ax2=ax.twinx()
+    unwrapped_ph_noise = 2*np.pi*new_channels[channum]*delays[::blocksize*osamp][:len(slopes)]/4096/osamp + ph0
+    print("unwraped phase noise", np.std(unwrapped_ph_noise))
+    # sigma_tau = phase2timenoise(unwrapped_ph_noise, 2, 61e3)
+    # print(f"expected slope noise : {sigma_tau/4e-9:5.3e} samp")
+    plt.plot(unwrapped_ph_noise,c='red',marker='*')
     plt.show()
 
-    plt.plot(2*np.pi*1835*delays[::blocksize]/4096)
+    plt.plot(2*np.pi*new_channels[channum]*delays[::blocksize*osamp][:len(slopes)]/4096/osamp)
     plt.plot(-ph0)
     # plt.plot(r_val)
     # plt.plot(delays[::5000])
