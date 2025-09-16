@@ -1,6 +1,7 @@
 from matplotlib import pyplot as plt
 import numpy as np
 import sys
+from scipy.stats import median_abs_deviation as mad
 
 def phase2timenoise(sigma_phase, nchan, chanwidth):
     return np.sqrt(12) * sigma_phase / chanwidth / np.sqrt(nchan * (nchan**2-1))
@@ -127,10 +128,48 @@ if __name__ == '__main__':
         spec1=f['spectra1']
         spec2=f['spectra2']
         delays=f['delays']
+    with np.load("/scratch/thomasb/mohan/raw_16_0.08.npz") as f:
+        new_spec1 = f['spec1']
+        new_spec2 = f['spec2']
+        new_channels = f['channels']
+    osamp=16
+    # Global font size settings
+    plt.rcParams.update({
+        "font.size": 16,
+        "axes.labelsize": 18,
+        "axes.titlesize": 20,
+        "xtick.labelsize": 14,
+        "ytick.labelsize": 14,
+        "figure.titlesize": 22
+    })
+    # fig=plt.gcf()
+    # fig.set_size_inches(10,4)
+    # plt.title(r"Simulated 1/f drift [25 $\mu$Hz to 250 MHz] ")
+    # plt.plot(np.arange(len(delays))*16e-6, delays*4, lw=2)
+    # plt.xlabel("Time (s)")
+    # plt.ylabel("Drift (ns)")
+    # plt.tight_layout()
+    # plt.savefig("/scratch/thomasb/mohan/drift.png",dpi=300)
 
     avglen=3200
     # auto = np.abs(spec1[:,4:5])**2-np.abs(spec1[:,0:1])**2
-    # auto_avg1 = average_rows(auto,nblock=avglen)
+    # plt.clf()
+    # fig=plt.gcf()
+    # fig.set_size_inches(10,6)
+    # auto = np.abs(spec1[:,:])**2
+    # auto_avg1 = average_rows(auto,nblock=10000)
+    # df=0.061
+    # myext = [1829.5*df, 1839.5*df, spec1.shape[0]*16e-6, 0]
+    # plt.title(f"METEOR M2-4\nBW = 100 kHz, S/N -6 dB, int. time {10000*16e-6:4.2f}s")
+    # im2=plt.imshow(np.log10(auto_avg1), aspect='auto',interpolation='none',extent=myext)
+    # plt.xlabel("Freq (MHz)")
+    # plt.ylabel("Time (s)")
+    # ax=plt.gca()
+    # plt.axvline(1834.1888*df, ls='dashed',c='black')
+    # cbar = fig.colorbar(im2, ax=ax, orientation="vertical")
+    # cbar.ax.tick_params(labelsize=14)
+    # cbar.set_label("log(Power)", fontsize=16)
+    # plt.savefig("/scratch/thomasb/mohan/meteor.png",dpi=300)
     # # auto = np.abs(spec2[:,4:5])**2-np.abs(spec2[:,0:1])**2
     # # auto_avg2 = average_rows(auto,nblock=avglen)
     
@@ -170,118 +209,130 @@ if __name__ == '__main__':
     # # sys.exit()
 
     #iterate over several blocks and fit a line
-    blocksize=avglen
-    st=0
-    nblocks=spec1.shape[0]//blocksize
-    # nblocks=20
-    print("Num blocks are", nblocks)
-    fit_delta=np.zeros(nblocks,dtype='float64')
-    actual_delta = np.zeros(nblocks,dtype='float64')
-    r_val = np.zeros(nblocks,dtype='float64')
-    for i in range(nblocks):
-        #fft and get a coarse guess
-        ix=st+i*blocksize
-        # print("taking data from ", ix, ix+blocksize)
-        y1=spec1[ix:ix+blocksize,4]
-        y2=spec2[ix:ix+blocksize,4]
-        xc_small = y1*np.conj(y2)
-        xc_fft = np.fft.fftshift(np.abs(np.fft.fft(xc_small)))
-        mm=np.argmax(xc_fft)
-        M=len(xc_fft)
-        # print(M)
-        expected_delta = -(mm-M/2)/M /1834
-        if np.abs(expected_delta) < 1e-15: expected_delta = 1e-15
-        # print("Starting point", expected_delta)
-        # print(f"Block {i} Expected delta={expected_delta}")
-        alpha=lmsolver(xc_small,expected_delta,1834.1888,lamda=10,ftol=1e-8,xtol=1e-8,niter=100)
-        fit_delta[i]=alpha
-        # plt.title(f"Block {i}")
-        # plt.plot(delays[ix:ix+blocksize])
+    for mult in range(5):
+        blocksize=avglen
+        st=0
+        nblocks=spec1.shape[0]//blocksize
+        # nblocks=20
+        print("Num blocks are", nblocks)
+        fit_delta=np.zeros(nblocks,dtype='float64')
+        actual_delta = np.zeros(nblocks,dtype='float64')
+        r_val = np.zeros(nblocks,dtype='float64')
+        for i in range(nblocks):
+            #fft and get a coarse guess
+            ix=st+i*blocksize
+            # print("taking data from ", ix, ix+blocksize)
+            y1=spec1[ix:ix+blocksize,4]
+            y2=spec2[ix:ix+blocksize,4]
+            xc_small = y1*np.conj(y2)
+            xc_fft = np.fft.fftshift(np.abs(np.fft.fft(xc_small)))
+            mm=np.argmax(xc_fft)
+            M=len(xc_fft)
+            # print(M)
+            expected_delta = -(mm-M/2)/M /1834
+            if np.abs(expected_delta) < 1e-15: expected_delta = 1e-15
+            # print("Starting point", expected_delta)
+            # print(f"Block {i} Expected delta={expected_delta}")
+            alpha=lmsolver(xc_small,expected_delta,1834.1888,lamda=10,ftol=1e-8,xtol=1e-8,niter=100)
+            fit_delta[i]=alpha
+            # plt.title(f"Block {i}")
+            # plt.plot(delays[ix:ix+blocksize])
+            # plt.show()
+            xx=np.arange(ix,ix+blocksize)
+            yy=delays[ix:ix+blocksize]
+            yymean=np.mean(yy)
+            m,c=np.polyfit(xx,yy,1)
+            yypred=np.polyval([m,c],xx)
+            SSreg=np.sum((yypred-yymean)**2)
+            SStot=np.sum((yy-yymean)**2)
+            # print(f"SSreg, SStot for {i}", SSreg,SStot)
+            r_val[i] = np.sqrt(SSreg/SStot)
+            # m,c=np.polyfit(np.arange(0,en-st),delays[st:en]-delays[st],1)
+            # print(f"block {i} slope", m/4096, "pred slope", alpha)
+            actual_delta[i] = m/4096
+
+        
+        # xc=new_spec1[:,:]*np.conj(new_spec2[:,:])
+        # xc_true=xc[:,:]*np.exp(2j*np.pi*new_channels*delays[:osamp*new_spec1.shape[0]:osamp,None]/4096/osamp)
+        # xc_true_avg = average_rows(xc_true,nblock=1000)
+        # xc_avg = average_rows(xc,nblock=1000)
+
+        # # plt.plot(auto_avg1[:,0],label='autos1')
+        # plt.plot(np.abs(xc_true_avg[:,4]),label='cross corrected true')
+        # plt.plot(np.real(xc_true_avg[:,4]),label='cross corrected true real')
+        # plt.plot(np.abs(xc_avg[:,4]),label='cross uncorrected true')
+        # plt.legend()
         # plt.show()
-        xx=np.arange(ix,ix+blocksize)
-        yy=delays[ix:ix+blocksize]
-        yymean=np.mean(yy)
-        m,c=np.polyfit(xx,yy,1)
-        yypred=np.polyval([m,c],xx)
-        SSreg=np.sum((yypred-yymean)**2)
-        SStot=np.sum((yy-yymean)**2)
-        # print(f"SSreg, SStot for {i}", SSreg,SStot)
-        r_val[i] = np.sqrt(SSreg/SStot)
-        # m,c=np.polyfit(np.arange(0,en-st),delays[st:en]-delays[st],1)
-        # print(f"block {i} slope", m/4096, "pred slope", alpha)
-        actual_delta[i] = m/4096
+        # sys.exit()
+        
+        st=0
+        blocksize = avglen // osamp
+        
+        print("new channels are", new_channels/osamp)
+        nblocks=new_spec1.shape[0]//blocksize
+        print("new blocksize=",blocksize)
+        n = np.arange(0,blocksize)
+        xc_avg_corrected = np.zeros((nblocks,len(new_channels)),dtype='complex128')
+        xc_avg_uncorrected = np.zeros((nblocks,len(new_channels)),dtype='complex128')
+        slopes = np.zeros(nblocks,dtype='float64')
+        # ph_noises = np.zeros(nblocks,dtype='float64')
+        for i in range(nblocks):
+            #fft and get a coarse guess
+            ix=st+i*blocksize
+            y1=new_spec1[ix:ix+blocksize,:]
+            y2=new_spec2[ix:ix+blocksize,:]
+            xc_small = y1*np.conj(y2)
+            # xc_corrected1 = xc_small * np.exp(2j*np.pi*1834*n*fit_delta[i])
+            xc_corrected1 = xc_small * np.exp(2j*np.pi*new_channels*n[:,None]*fit_delta[i])
+            # print(xc_corrected1.shape)
+            # xc_corrected2 = xc_small * np.exp(2j*np.pi*1834*n*actual_delta[i])
+            # print(np.abs(np.mean(xc_corrected1))>np.abs(np.mean(xc_corrected2)))
+            # ph_noises[i] = np.std(np.angle(xc_corrected1)[:,0],axis=0) # phase noise is around 1.8 rad as expected from low S/N
+            xc_avg_corrected[i,:] = np.mean(xc_corrected1,axis=0)
+            xc_avg_uncorrected[i,:] = np.mean(xc_small,axis=0)
+            ph = np.unwrap(np.angle(xc_avg_corrected[i,:]))
+            slope, const = np.polyfit(2*np.pi*new_channels/4096/osamp,ph,1)
+            slopes[i] = slope
 
-    with np.load("/scratch/thomasb/mohan/raw_16_0.08.npz") as f:
-        new_spec1 = f['spec1']
-        new_spec2 = f['spec2']
-        new_channels = f['channels']
-    osamp=16
-    # xc=new_spec1[:,:]*np.conj(new_spec2[:,:])
-    # xc_true=xc[:,:]*np.exp(2j*np.pi*new_channels*delays[:osamp*new_spec1.shape[0]:osamp,None]/4096/osamp)
-    # xc_true_avg = average_rows(xc_true,nblock=1000)
-    # xc_avg = average_rows(xc,nblock=1000)
-
-    # # plt.plot(auto_avg1[:,0],label='autos1')
-    # plt.plot(np.abs(xc_true_avg[:,4]),label='cross corrected true')
-    # plt.plot(np.real(xc_true_avg[:,4]),label='cross corrected true real')
-    # plt.plot(np.abs(xc_avg[:,4]),label='cross uncorrected true')
-    # plt.legend()
-    # plt.show()
-    # sys.exit()
-    
-    st=0
-    blocksize = avglen // osamp
-    
-    print("new channels are", new_channels/osamp)
-    nblocks=new_spec1.shape[0]//blocksize
-    print("new blocksize=",blocksize)
-    n = np.arange(0,blocksize)
-    xc_avg_corrected = np.zeros((nblocks,len(new_channels)),dtype='complex128')
-    xc_avg_uncorrected = np.zeros((nblocks,len(new_channels)),dtype='complex128')
-    slopes = np.zeros(nblocks,dtype='float64')
-    # ph_noises = np.zeros(nblocks,dtype='float64')
-    for i in range(nblocks):
-        #fft and get a coarse guess
-        ix=st+i*blocksize
-        y1=new_spec1[ix:ix+blocksize,:]
-        y2=new_spec2[ix:ix+blocksize,:]
-        xc_small = y1*np.conj(y2)
-        # xc_corrected1 = xc_small * np.exp(2j*np.pi*1834*n*fit_delta[i])
-        xc_corrected1 = xc_small * np.exp(2j*np.pi*new_channels*n[:,None]*fit_delta[i])
-        # print(xc_corrected1.shape)
-        # xc_corrected2 = xc_small * np.exp(2j*np.pi*1834*n*actual_delta[i])
-        # print(np.abs(np.mean(xc_corrected1))>np.abs(np.mean(xc_corrected2)))
-        # ph_noises[i] = np.std(np.angle(xc_corrected1)[:,0],axis=0) # phase noise is around 1.8 rad as expected from low S/N
-        xc_avg_corrected[i,:] = np.mean(xc_corrected1,axis=0)
-        xc_avg_uncorrected[i,:] = np.mean(xc_small,axis=0)
-        ph = np.unwrap(np.angle(xc_avg_corrected[i,:]))
-        slope, const = np.polyfit(2*np.pi*new_channels/4096/osamp,ph,1)
-        slopes[i] = slope
-
-    # plt.plot(np.abs(xc_avg[:,4]))
-    plt.plot(np.abs(xc_avg_uncorrected[:,0]),label='uncorrected')
-    plt.plot(np.abs(xc_avg_corrected[:,0]),label='corrected per-block')
-    # # plt.axhline(np.mean(auto_avg1[:,0]),label='autos',c='red', lw=3, ls='dashed')
-    plt.legend()
-    # # plt.plot(np.abs(average_rows(spec1*np.conj(spec2),nblock=avglen))[:,4])
-    # plt.plot(np.abs(xc_avg_uncorrected[:,1]),label='uncorrected')
-    # plt.plot(np.abs(xc_avg_corrected[:,1]),label='corrected per-block')
-    # # plt.axhline(np.mean(auto_avg1[:,0]),label='autos',c='red', lw=3, ls='dashed')
-    # plt.legend()
-    # # ax=plt.gca()
-    # # ax2=plt.twinx()
-    # # ax2.plot(r_val,label='R value',c='red',alpha=0.5)
-    # # ax2.axhline(0.5,ls='dashed',c='black',lw=3,label='Drift ISNT too linear below')
-    plt.show()
-
-    plt.plot(slopes)
-    err = np.std(slopes+delays[::blocksize*osamp][:len(slopes)])
-    print("error", err)
-    plt.plot(-delays[::blocksize*osamp][:len(slopes)])
-    # plt.ylim(-0.5,0.5)
-    plt.ylim(-400,400)
-    plt.show()
-    # sys.exit()
+        # plt.plot(np.abs(xc_avg[:,4]))
+        # plt.plot(np.abs(xc_avg_uncorrected[:,0]),label='uncorrected')
+        # plt.plot(np.abs(xc_avg_corrected[:,0]),label='corrected per-block')
+        # # plt.axhline(np.mean(auto_avg1[:,0]),label='autos',c='red', lw=3, ls='dashed')
+        # plt.legend()
+        # # plt.plot(np.abs(average_rows(spec1*np.conj(spec2),nblock=avglen))[:,4])
+        # plt.plot(np.abs(xc_avg_uncorrected[:,1]),label='uncorrected')
+        # plt.plot(np.abs(xc_avg_corrected[:,1]),label='corrected per-block')
+        # # plt.axhline(np.mean(auto_avg1[:,0]),label='autos',c='red', lw=3, ls='dashed')
+        # plt.legend()
+        # # ax=plt.gca()
+        # # ax2=plt.twinx()
+        # # ax2.plot(r_val,label='R value',c='red',alpha=0.5)
+        # # ax2.axhline(0.5,ls='dashed',c='black',lw=3,label='Drift ISNT too linear below')
+        # plt.show()
+        times=np.arange(len(slopes))*16e-6*avglen
+        fig=plt.gcf()
+        fig.set_size_inches(10,4)
+        plt.clf()
+        plt.title(rf"Int. time {avglen*16e-6:4.2f}s, channel $\Delta \nu = {61/osamp:4.2f}$ kHz")
+        plt.plot(times, slopes*4, label='Fitted drift')
+        maderr = mad(slopes+delays[::blocksize*osamp][:len(slopes)])*4
+        stddev = np.std(slopes+delays[::blocksize*osamp][:len(slopes)])*4
+        print(maderr, stddev)
+        err = maderr
+        plt.plot(times, -delays[::blocksize*osamp][:len(slopes)]*4, label='True drift',ls='dashed',lw='2')
+        plt.text(0.9, 0.1, f"MAD {int(err)} ns", transform=plt.gca().transAxes, fontsize=14,
+            verticalalignment='top', horizontalalignment='right')
+        # plt.ylim(-0.5,0.5)
+        plt.ylim(-1000,2000)
+        plt.xlabel("Time (s)")
+        plt.ylabel("Drift (ns)")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(f"/scratch/thomasb/mohan/drift_fitted{mult}.png",dpi=300)
+        # plt.show()
+        print("Done mult", mult)
+        avglen*=2
+    sys.exit()
 
     channum = 5
     ph = np.angle(xc_avg_corrected[:,channum])
