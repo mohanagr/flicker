@@ -2,6 +2,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import sys
 from scipy.stats import median_abs_deviation as mad
+import cg
 
 def phase2timenoise(sigma_phase, nchan, chanwidth):
     return np.sqrt(12) * sigma_phase / chanwidth / np.sqrt(nchan * (nchan**2-1))
@@ -128,7 +129,7 @@ if __name__ == '__main__':
         spec1=f['spectra1']
         spec2=f['spectra2']
         delays=f['delays']
-    with np.load("/scratch/thomasb/mohan/raw_16_0.08.npz") as f:
+    with np.load("/home/mohan/Downloads/raw_16_0.08.npz") as f:
         new_spec1 = f['spec1']
         new_spec2 = f['spec2']
         new_channels = f['channels']
@@ -145,12 +146,13 @@ if __name__ == '__main__':
     # fig=plt.gcf()
     # fig.set_size_inches(10,4)
     # plt.title(r"Simulated 1/f drift [25 $\mu$Hz to 250 MHz] ")
-    # plt.plot(np.arange(len(delays))*16e-6, delays*4, lw=2)
+    # plt.plot(np.arange(len(delays))*16e-6, -delays*4, lw=2)
     # plt.xlabel("Time (s)")
     # plt.ylabel("Drift (ns)")
     # plt.tight_layout()
-    # plt.savefig("/scratch/thomasb/mohan/drift.png",dpi=300)
-
+    # # plt.savefig("sim_drift.png",dpi=300)
+    # plt.show()
+    # sys.exit()
     avglen=3200
     # auto = np.abs(spec1[:,4:5])**2-np.abs(spec1[:,0:1])**2
     # plt.clf()
@@ -269,13 +271,14 @@ if __name__ == '__main__':
         blocksize = avglen // osamp
         
         print("new channels are", new_channels/osamp)
-        nblocks=new_spec1.shape[0]//blocksize
+        nblocks=new_spec1.shape[0]//blocksize - 5
         print("new blocksize=",blocksize)
         n = np.arange(0,blocksize)
         xc_avg_corrected = np.zeros((nblocks,len(new_channels)),dtype='complex128')
         xc_avg_uncorrected = np.zeros((nblocks,len(new_channels)),dtype='complex128')
         slopes = np.zeros(nblocks,dtype='float64')
-        # ph_noises = np.zeros(nblocks,dtype='float64')
+        ph_noises = np.zeros(nblocks,dtype='float64')
+        phases = np.zeros((nblocks,len(new_channels)),dtype='float64')
         for i in range(nblocks):
             #fft and get a coarse guess
             ix=st+i*blocksize
@@ -291,8 +294,25 @@ if __name__ == '__main__':
             xc_avg_corrected[i,:] = np.mean(xc_corrected1,axis=0)
             xc_avg_uncorrected[i,:] = np.mean(xc_small,axis=0)
             ph = np.unwrap(np.angle(xc_avg_corrected[i,:]))
+            phases[i, :] = ph
             slope, const = np.polyfit(2*np.pi*new_channels/4096/osamp,ph,1)
             slopes[i] = slope
+            ph_noises[i] = np.std(ph-(2*slope*np.pi*new_channels/4096/osamp+const))
+        
+        #TRY DOING CONJUGATE GRADIENT HERE
+        adev=1e-8
+        noise = np.median(ph_noises)
+        ddsigma = avglen*4096*adev*np.sqrt(2)
+        print("ddsigma", ddsigma, "phnoise estimate", noise)
+        Ninv = 1/(np.ones(len(slopes))*np.median(ph_noises)**2) #start with a constant noise for all time blocks
+        x = 2*np.pi*new_channels/4096/osamp
+        params = np.zeros(2*len(slopes),dtype='float64')
+        params[:len(slopes)]=1
+        params[len(slopes):]=1
+        cg.cg_linear_model_adev(params, x, np.ravel(phases), ddsigma, noise, eps=1e-10, niter=100) #verified that without a prior the solution lines up with polyfit
+        # plt.plot(slopes)
+        # plt.plot(params[:len(slopes)])
+        # plt.show()
 
         # plt.plot(np.abs(xc_avg[:,4]))
         # plt.plot(np.abs(xc_avg_uncorrected[:,0]),label='uncorrected')
@@ -315,20 +335,22 @@ if __name__ == '__main__':
         plt.clf()
         plt.title(rf"Int. time {avglen*16e-6:4.2f}s, channel $\Delta \nu = {61/osamp:4.2f}$ kHz")
         plt.plot(times, slopes*4, label='Fitted drift')
+        plt.plot(times, params[:len(slopes)]*4, label='Fit w/ ADEV prior')
         maderr = mad(slopes+delays[::blocksize*osamp][:len(slopes)])*4
+        maderr2 = mad(params[:len(slopes)]+delays[::blocksize*osamp][:len(slopes)])*4
         stddev = np.std(slopes+delays[::blocksize*osamp][:len(slopes)])*4
-        print(maderr, stddev)
+        print(maderr, maderr2, stddev)
         err = maderr
-        plt.plot(times, -delays[::blocksize*osamp][:len(slopes)]*4, label='True drift',ls='dashed',lw='2')
-        plt.text(0.9, 0.1, f"MAD {int(err)} ns", transform=plt.gca().transAxes, fontsize=14,
+        plt.plot(times, -delays[::blocksize*osamp][:len(slopes)]*4, label='True drift',ls='dashed',lw='2',c='purple')
+        plt.text(0.5, 0.1, f"MAD {int(err)} ns (no prior) vs {int(maderr2)} (w/ prior) ns", transform=plt.gca().transAxes, fontsize=14,
             verticalalignment='top', horizontalalignment='right')
         # plt.ylim(-0.5,0.5)
         plt.ylim(-1000,2000)
         plt.xlabel("Time (s)")
         plt.ylabel("Drift (ns)")
-        plt.legend()
+        plt.legend(loc=4)
         plt.tight_layout()
-        plt.savefig(f"/scratch/thomasb/mohan/drift_fitted{mult}.png",dpi=300)
+        plt.savefig(f"./images/drift_fitted{mult}_adev.png",dpi=300)
         # plt.show()
         print("Done mult", mult)
         avglen*=2

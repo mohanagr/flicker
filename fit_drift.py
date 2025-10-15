@@ -139,7 +139,7 @@ if __name__ == '__main__':
     
     # 
     
-    avglen=2000
+    avglen=10000
     auto = np.abs(spec1[:,4:5])**2-np.abs(spec1[:,0:1])**2
     auto_avg1 = average_rows(auto,nblock=avglen)
     # auto = np.abs(spec2[:,4:5])**2-np.abs(spec2[:,0:1])**2
@@ -277,16 +277,25 @@ if __name__ == '__main__':
         # m,c=np.polyfit(np.arange(0,en-st),delays[st:en]-delays[st],1)
         # print(f"block {i} slope", m/4096, "pred slope", alpha)
         actual_delta[i] = m/4096
+    plt.rcParams.update({
+        "font.size": 16,
+        "axes.labelsize": 18,
+        "axes.titlesize": 20,
+        "xtick.labelsize": 14,
+        "ytick.labelsize": 14,
+        "figure.titlesize": 22
+    })
 
-    plt.title(f"Blocks with R < 0.5: {np.mean(r_val<0.5)*100:5.3f}%")
-    plt.plot(actual_delta,label="Delay line slope (approx. truth)")
-    plt.plot(fit_delta, label="Estimated drift")
-    plt.show()
-
+    # plt.title(f"Blocks with R < 0.5: {np.mean(r_val<0.5)*100:5.3f}%")
+    # plt.plot(actual_delta,label="Delay line slope (approx. truth)")
+    # plt.plot(fit_delta, label="Estimated drift")
+    # plt.show()
+    fig=plt.gcf()
+    fig.set_size_inches(10,4)
     plt.hist(r_val,bins=np.linspace(0,1,51),align='mid')
-    plt.title("R values distribution")
-    plt.show()
-
+    plt.title(f"R values. #blocks R < 0.5: {np.mean(r_val<0.5)*100:5.3f}%")
+    plt.savefig("R_values.png",dpi=300)
+    plt.clf()
     #plot the delays for the bottom 6 worst delay ranges where line is terrible
     nbad = 6
     bad_idx = np.argsort(r_val)
@@ -299,7 +308,6 @@ if __name__ == '__main__':
         ax[j].plot(delays[bad_idx[j]*blocksize:(bad_idx[j]+1)*blocksize])
     plt.tight_layout()
     plt.show()
-
 
     st=0
     print("blocksize=",blocksize)
@@ -315,7 +323,7 @@ if __name__ == '__main__':
         y2=spec2[ix:ix+blocksize,4:6]
         xc_small = y1*np.conj(y2)
         # xc_corrected1 = xc_small * np.exp(2j*np.pi*1834*n*fit_delta[i])
-        xc_corrected1 = xc_small * np.exp(2j*np.pi*np.asarray([1834.1888, 1835])*n[:,None]*fit_delta[i])
+        xc_corrected1 = xc_small * np.exp(2j*np.pi*np.asarray([1834, 1835])*n[:,None]*fit_delta[i])
         # print(xc_corrected1.shape)
         # xc_corrected2 = xc_small * np.exp(2j*np.pi*1834*n*actual_delta[i])
         # print(np.abs(np.mean(xc_corrected1))>np.abs(np.mean(xc_corrected2)))
@@ -327,12 +335,17 @@ if __name__ == '__main__':
         slopes[i] = slope
     # xc_avg_corrected = average_rows(xc_avg_corrected,nblock=2)
 
-
     # plt.plot(np.abs(xc_avg[:,4]))
-    # plt.plot(np.abs(xc_avg_uncorrected[:,0]),label='uncorrected')
-    # plt.plot(np.abs(xc_avg_corrected[:,0]),label='corrected per-block')
-    # # plt.axhline(np.mean(auto_avg1[:,0]),label='autos',c='red', lw=3, ls='dashed')
-    # plt.legend()
+    
+    fig=plt.gcf()
+    fig.set_size_inches(10,4)
+    times = np.arange(len(delays))*16e-6
+    plt.title(f"Normalized visibility. Int.time {blocksize*16e-6:4.2f}s")
+    plt.plot(times[::blocksize],np.abs(xc_avg_uncorrected[:,0])/np.mean(auto_avg1[:,0]),label='Uncorrected visibility')
+    plt.plot(times[::blocksize],np.abs(xc_avg_corrected[:,0])/np.mean(auto_avg1[:,0]),label='Drift-corrected visibility')
+    plt.axhline(1,label='Autos',c='black', lw=2, ls='dashed')
+    plt.legend()
+    plt.savefig("normalized_visibility.png",dpi=300)
     # # plt.plot(np.abs(average_rows(spec1*np.conj(spec2),nblock=avglen))[:,4])
     # plt.plot(np.abs(xc_avg_uncorrected[:,1]),label='uncorrected')
     # plt.plot(np.abs(xc_avg_corrected[:,1]),label='corrected per-block')
