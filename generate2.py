@@ -8,6 +8,8 @@ import sys
 
 
 global bw
+
+
 # x = np.random.randn(10*500).reshape(10,500)
 # cc = np.random.randn(500)
 # niter=100
@@ -19,38 +21,51 @@ global bw
 #     tot+=(t2-t1)
 # print("roll of 100 takes", tot/niter)
 # sys.exit(0)
-def get_acf(tau,f1,f2):
-    s1,c1=sici(2*np.pi*f1*tau)
-    s2,c2=sici(2*np.pi*f2*tau)
-    y=2*(c2-c1)
-    y=np.nan_to_num(y,nan=2*np.log(f2/f1)+1e-3)
+def get_acf(tau, f1, f2):
+    s1, c1 = sici(2 * np.pi * f1 * tau)
+    s2, c2 = sici(2 * np.pi * f2 * tau)
+    y = 2 * (c2 - c1)
+    y = np.nan_to_num(y, nan=2 * np.log(f2 / f1) + 1e-3)
     return y
 
+
 @nb.njit()
-def recurse(i,bank,samp_bank,level,coeffs,osamp_coeffs,krig_ptr,samp_ptr):
+def recurse(i, bank, samp_bank, level, coeffs, osamp_coeffs, krig_ptr, samp_ptr):
     # print("rec", i, "level", level)
     global bw
-    retval=0
+    retval = 0
 
-    krig_samp_own = coeffs@bank[level,krig_ptr[level]:krig_ptr[level]+500] + np.random.randn(1)[0]
-    krig_ptr[level] +=1
+    krig_samp_own = (
+        coeffs @ bank[level, krig_ptr[level] : krig_ptr[level] + 500]
+        + np.random.randn(1)[0]
+    )
+    krig_ptr[level] += 1
     if krig_ptr[level] > 1500:
-        bank[level,:499] = bank[level, -499:]
+        bank[level, :499] = bank[level, -499:]
         # bank[level, 499] = krig_samp_own
         krig_ptr[level] = 0
-    bank[level, krig_ptr[level]+499]=krig_samp_own
-#     samp_bank[1,i] += krig_samp_own
+    bank[level, krig_ptr[level] + 499] = krig_samp_own
+    #     samp_bank[1,i] += krig_samp_own
     retval += krig_samp_own
     if level == 0:
         return retval
-    if i%10==0:
+    if i % 10 == 0:
         # print("recursing")
         # samp_val = recurse(i//10, bank, samp_bank, level-1, coeffs, osamp_coeffs)
-        samp_ptr[level-1] +=1
-        if samp_ptr[level-1] > 2000 - 2*bw:
-            samp_bank[level-1,:2*bw-1] = samp_bank[level-1, -2*bw+1:]
-            samp_ptr[level-1] = 0
-        samp_bank[level-1, samp_ptr[level-1]+2*bw-1]=recurse(i//10, bank, samp_bank, level-1, coeffs, osamp_coeffs, krig_ptr, samp_ptr)
+        samp_ptr[level - 1] += 1
+        if samp_ptr[level - 1] > 2000 - 2 * bw:
+            samp_bank[level - 1, : 2 * bw - 1] = samp_bank[level - 1, -2 * bw + 1 :]
+            samp_ptr[level - 1] = 0
+        samp_bank[level - 1, samp_ptr[level - 1] + 2 * bw - 1] = recurse(
+            i // 10,
+            bank,
+            samp_bank,
+            level - 1,
+            coeffs,
+            osamp_coeffs,
+            krig_ptr,
+            samp_ptr,
+        )
         # samp_bank[level-1,:] = np.roll(samp_bank[level-1,:],shift=-1)
         # if samp_ptr[level-1] == 1500:
         #     samp_bank[level-1,:499] = samp_bank[level-1, -499:]
@@ -60,93 +75,119 @@ def recurse(i,bank,samp_bank,level,coeffs,osamp_coeffs,krig_ptr,samp_ptr):
         # samp_bank[level-1, krig_ptr[level-1]+499]=krig_samp_own
         # samp_bank[level-1,-1] = recurse(i//10, bank, samp_bank, level-1, coeffs, osamp_coeffs, krig_ptr)
     # rownum = i%10 - 1 #row 0 is 0.1
-    retval += (osamp_coeffs[i%10 - 1,:]@samp_bank[level-1,samp_ptr[level-1]:samp_ptr[level-1]+2*bw])
+    retval += (
+        osamp_coeffs[i % 10 - 1, :]
+        @ samp_bank[level - 1, samp_ptr[level - 1] : samp_ptr[level - 1] + 2 * bw]
+    )
     return retval
 
+
 @nb.njit()
-def generate(n, bank,samp_bank_small,start_level,coeffs,osamp_coeffs,krig_ptr,samp_ptr):
+def generate(
+    n, bank, samp_bank_small, start_level, coeffs, osamp_coeffs, krig_ptr, samp_ptr
+):
     global bw
-    y = np.empty(n+1)
-    for i in range(1,n+1):
-        y[i] = recurse(i,bank,samp_bank_small,start_level,coeffs,osamp_coeffs,krig_ptr,samp_ptr)
+    y = np.empty(n + 1)
+    for i in range(1, n + 1):
+        y[i] = recurse(
+            i,
+            bank,
+            samp_bank_small,
+            start_level,
+            coeffs,
+            osamp_coeffs,
+            krig_ptr,
+            samp_ptr,
+        )
         # y[i] = 2+1
     return y
 
 
-f1=0.05
-f2=0.5
-N=2*1000
-ps=np.zeros(N//2+1,dtype='complex128')
-ps[int(f1*N):int(f2*N)+1]=1/np.arange(int(f1*N),int(f2*N)+1) #N/2 is the scaling factor to line the two PS up.
+f1 = 0.05
+f2 = 0.5
+N = 2 * 1000
+ps = np.zeros(N // 2 + 1, dtype="complex128")
+ps[int(f1 * N) : int(f2 * N) + 1] = 1 / np.arange(
+    int(f1 * N), int(f2 * N) + 1
+)  # N/2 is the scaling factor to line the two PS up.
 # acf_dft=N*np.fft.irfft(ps)
 # acf_anl=get_acf(np.arange(0,N//2+1),f1,f2)
 
-nlevels=4
-nsamps=500
-bank=np.zeros((nlevels,nsamps),dtype='float64')
+nlevels = 4
+nsamps = 500
+bank = np.zeros((nlevels, nsamps), dtype="float64")
 for ll in range(nlevels):
-    noise = N*np.fft.irfft(np.sqrt(ps/2) * (np.random.randn(N//2+1) + 1j * np.random.randn(N//2+1)))  
-    bank[ll,:]=noise[:nsamps]
+    noise = N * np.fft.irfft(
+        np.sqrt(ps / 2)
+        * (np.random.randn(N // 2 + 1) + 1j * np.random.randn(N // 2 + 1))
+    )
+    bank[ll, :] = noise[:nsamps]
 
-acf_anl=get_acf(np.arange(0,nsamps),f1,f2)
-C=toeplitz(acf_anl)
-Cinv=np.linalg.inv(C)
-vec=get_acf(np.arange(0,nsamps)+1,f1,f2)
-vec=vec[::-1]
-coeffs=vec.T@Cinv
-sigma = np.sqrt(C[0,0]-vec@Cinv@vec.T)
+acf_anl = get_acf(np.arange(0, nsamps), f1, f2)
+C = toeplitz(acf_anl)
+Cinv = np.linalg.inv(C)
+vec = get_acf(np.arange(0, nsamps) + 1, f1, f2)
+vec = vec[::-1]
+coeffs = vec.T @ Cinv
+sigma = np.sqrt(C[0, 0] - vec @ Cinv @ vec.T)
 print(sigma)
 
-bw=16
-taus=np.arange(-bw,bw)
+bw = 16
+taus = np.arange(-bw, bw)
 print(len(taus))
 # coeff=np.ones(len(taus))
 
 
-t_n_diff = np.arange(1,10)/10
-osamp_coeffs = np.zeros((len(t_n_diff), len(taus)),dtype='float64')
-for i,dd in enumerate(t_n_diff):
+t_n_diff = np.arange(1, 10) / 10
+osamp_coeffs = np.zeros((len(t_n_diff), len(taus)), dtype="float64")
+for i, dd in enumerate(t_n_diff):
     # print("saving coeffs for", dd)
-    osamp_coeffs[i,:] = np.sinc(dd-taus)
+    osamp_coeffs[i, :] = np.sinc(dd - taus)
 print(osamp_coeffs.shape)
-krig_ptr = np.zeros(nlevels,dtype='int64')
-samp_ptr = np.zeros(nlevels,dtype='int64')
-#forward generation first to enable later sampling
-samp_bank = np.zeros(bank.shape,dtype=bank.dtype)
+krig_ptr = np.zeros(nlevels, dtype="int64")
+samp_ptr = np.zeros(nlevels, dtype="int64")
+# forward generation first to enable later sampling
+samp_bank = np.zeros(bank.shape, dtype=bank.dtype)
 # samp_bank = bank.copy()
-samp_bank[0,:] = bank[0,:].copy()
+samp_bank[0, :] = bank[0, :].copy()
 
-ctr=[0,0,0]
+ctr = [0, 0, 0]
 # plt.loglog(np.abs(np.fft.rfft(samp_bank[1,:])));plt.title("before")
 
-for ll in range(1,nlevels):
-    print("processing level", ll, "parent", ll-1)
+for ll in range(1, nlevels):
+    print("processing level", ll, "parent", ll - 1)
     for i in range(samp_bank.shape[1]):
-        #generate level's own krig - already there!
-    #         print("samp bank begin", samp_bank[ll,i])
-        krig_samp_own = coeffs@bank[ll,:] + sigma * np.random.randn(1)[0]
-        bank[ll,:] = np.roll(bank[ll,:],shift=-1)
-        bank[ll,-1] = krig_samp_own
+        # generate level's own krig - already there!
+        #         print("samp bank begin", samp_bank[ll,i])
+        krig_samp_own = coeffs @ bank[ll, :] + sigma * np.random.randn(1)[0]
+        bank[ll, :] = np.roll(bank[ll, :], shift=-1)
+        bank[ll, -1] = krig_samp_own
         # krig_samp_own = coeffs@bank[ll,krig_ptr[ll]:krig_ptr[ll]+500] + sigma * np.random.randn(1)[0]
         # if krig_ptr[ll] == 1500:
         #     bank[ll,:499] = bank[ll, -499:]
         #     bank[ll, 499] = krig_samp_own
         #     krig_ptr[ll] = 0
         # krig_ptr[ll] +=1
-        samp_bank[ll,i] += krig_samp_own
-        if i%10==0:
-            ctr[ll-1]+=1
-            samp_bank[ll,i] += samp_bank[ll-1,ctr[ll-1] + bw]
+        samp_bank[ll, i] += krig_samp_own
+        if i % 10 == 0:
+            ctr[ll - 1] += 1
+            samp_bank[ll, i] += samp_bank[ll - 1, ctr[ll - 1] + bw]
             continue
-        rownum = i%10 - 1 #row 0 is 0.1
-        samp_bank[ll,i] += (osamp_coeffs[rownum,:]@samp_bank[ll-1,ctr[ll-1]:ctr[ll-1]+2*bw])
+        rownum = i % 10 - 1  # row 0 is 0.1
+        samp_bank[ll, i] += (
+            osamp_coeffs[rownum, :]
+            @ samp_bank[ll - 1, ctr[ll - 1] : ctr[ll - 1] + 2 * bw]
+        )
 
-bank=np.zeros((nlevels,2000),dtype='float64')
+bank = np.zeros((nlevels, 2000), dtype="float64")
 for ll in range(nlevels):
-    noise = N*np.fft.irfft(np.sqrt(ps/2) * (np.random.randn(N//2+1) + 1j * np.random.randn(N//2+1)))  
-    bank[ll,:]=noise
-samp_bank_small = np.zeros((samp_bank.shape[0], 2000), dtype='float64')
-samp_bank_small[:,:2*bw] = samp_bank[:,200:200+2*bw].copy()
+    noise = N * np.fft.irfft(
+        np.sqrt(ps / 2)
+        * (np.random.randn(N // 2 + 1) + 1j * np.random.randn(N // 2 + 1))
+    )
+    bank[ll, :] = noise
+samp_bank_small = np.zeros((samp_bank.shape[0], 2000), dtype="float64")
+samp_bank_small[:, : 2 * bw] = samp_bank[:, 200 : 200 + 2 * bw].copy()
 print(samp_bank_small.shape)
 # yy=np.zeros(2000001,dtype=np.float64)
 
@@ -156,22 +197,33 @@ print(samp_bank_small.shape)
 #     yy[i] = recurse(i,bank,samp_bank_small,nlevels-1,coeffs,osamp_coeffs,krig_ptr)
 #     t2=time.time()
 #     tot+=(t2-t1)
-generate(200,bank,samp_bank_small,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr)
-t1=time.time()
-yy = generate(2000000,bank,samp_bank_small,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr)
-t2=time.time()
-tot=t2-t1
+generate(
+    200, bank, samp_bank_small, nlevels - 1, coeffs, osamp_coeffs, krig_ptr, samp_ptr
+)
+t1 = time.time()
+yy = generate(
+    2000000,
+    bank,
+    samp_bank_small,
+    nlevels - 1,
+    coeffs,
+    osamp_coeffs,
+    krig_ptr,
+    samp_ptr,
+)
+t2 = time.time()
+tot = t2 - t1
 
-tot2=0
-niter=2000000
-yy = np.empty(niter+1)
-t1=time.time()
-for i in range(1,niter+1):
+tot2 = 0
+niter = 2000000
+yy = np.empty(niter + 1)
+t1 = time.time()
+for i in range(1, niter + 1):
     # yy[i] = recurse(i,bank,samp_bank_small,nlevels-1,coeffs,osamp_coeffs,krig_ptr,samp_ptr)
-    yy[i]=2+1
-t2=time.time()
-tot2+=(t2-t1)
+    yy[i] = 2 + 1
+t2 = time.time()
+tot2 += t2 - t1
 
-print(tot/niter, tot2/niter)
+print(tot / niter, tot2 / niter)
 # plt.loglog(np.abs(np.fft.rfft(yy[1:])));plt.title("power spectrum")
 # plt.show()

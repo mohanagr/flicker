@@ -7,7 +7,7 @@ import numba as nb
 import sys
 from rocket_fft import c2r
 import concurrent.futures
-from scipy.signal import firwin,welch
+from scipy.signal import firwin, welch
 import sys
 from upsample_poly import big_interp_c
 from scipy.interpolate import CubicSpline, splrep, splev
@@ -16,6 +16,7 @@ import os
 os.environ["NUMBA_OPT"] = "3"
 os.environ["NUMBA_LOOP_VECTORIZE"] = "1"
 os.environ["NUMBA_ENABLE_AVX"] = "1"
+
 
 def plot_spectra(y, size):
     f, P = welch(y, nperseg=size, noverlap=size // 2)
@@ -31,6 +32,7 @@ def plot_spectra(y, size):
     plt.loglog(P)
     plt.tight_layout()
     plt.show()
+
 
 @nb.njit(cache=True)
 def gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len):
@@ -61,7 +63,8 @@ def gen_krig(bank, rand_bank, level, hf, sigma, krig_bank_size, krig_len):
         16,
     )
 
-@nb.njit(cache=True,nogil=True)
+
+@nb.njit(cache=True, nogil=True)
 def _generate(
     y,
     n,
@@ -81,8 +84,8 @@ def _generate(
     STACK_PTR,
     circular_buffer_offsets,
 ):
-    start_pt = STACK[0,1]
-    tot=0
+    start_pt = STACK[0, 1]
+    tot = 0
     norm = 1 / (krig_bank_size + krig_len)
     upper = 2 * bw
     up = osamp_coeffs.shape[0]
@@ -146,7 +149,7 @@ def _generate(
             # print("adding pt + 1 to stack")
             # print(f"dot product for lev {lev}")
             # print(f"lev {lev-1} starting {quo}-{cbop} = {quo - cbop}")
-            y[pt-start_pt] = tot
+            y[pt - start_pt] = tot
             if pt == start_pt + n - 1:
                 break
             # STACK_PTR+=1 #pop and push combined
@@ -166,6 +169,7 @@ def _generate(
         # print("-----------------------------------------------------------")
     return y
 
+
 class flicker:
     def __init__(self, nlevels, nsamp, f1, f2, cache_file=None):
 
@@ -176,7 +180,7 @@ class flicker:
             self.nsamp = nsamp
             self.f1 = f1
             self.f2 = f2
-            
+
             coeff_len = 1024
             krig_len = 1024  # number of coeffs in the FIR filter
             acf_anl = self.get_acf(np.arange(0, coeff_len), f1, f2)
@@ -225,13 +229,13 @@ class flicker:
 
             # first len(fir) is garbage. after len(fir), krig timestream continues.
 
-            self.h = up*firwin(2 * bw * up + 1, 1 / up, window=("kaiser", 1))
-            
+            self.h = up * firwin(2 * bw * up + 1, 1 / up, window=("kaiser", 1))
+
             self.osamp_coeffs = self.h[:-1].reshape(-1, up).T[:, ::-1].copy()
             self.samp_bank = np.zeros(
                 (nlevels, krig_bank_size), dtype=self.krig_bank.dtype
             )  # krig + white bank
-            
+
             self.init_banks()
             self.init_pointers()
 
@@ -246,7 +250,9 @@ class flicker:
                 self.krig_bank_size,
                 self.krig_len,
             )
-        self.samp_bank[0, :] = self.krig_bank[0, self.krig_len:]  # topmost level just krig
+        self.samp_bank[0, :] = self.krig_bank[
+            0, self.krig_len :
+        ]  # topmost level just krig
         ctr = [0] * self.nlevels
         # Forward generate all but the topmost and the bottommost level
         for ll in range(
@@ -288,13 +294,15 @@ class flicker:
         self.krig_ptr[0] = self.krig_bank_size
 
     def init_pointers(self):
-        #at the end of each generate call, stack_ptr will always end up back at zero.
-        #generating final level's point means that all parent levels have been generated already
-        self.STACK = np.zeros((self.nlevels + 1, 2), dtype="int64") #col 0 - levels, col 1 - point number
+        # at the end of each generate call, stack_ptr will always end up back at zero.
+        # generating final level's point means that all parent levels have been generated already
+        self.STACK = np.zeros(
+            (self.nlevels + 1, 2), dtype="int64"
+        )  # col 0 - levels, col 1 - point number
         self.STACK_PTR = 0
         self.circular_buffer_offsets = np.zeros(self.nlevels, dtype="int64")
-        self.STACK[0,0]=self.nlevels-1
-        self.STACK[0,1]=self.start_pt
+        self.STACK[0, 0] = self.nlevels - 1
+        self.STACK[0, 1] = self.start_pt
 
     def get_acf(self, tau, f1, f2):
         s1, c1 = sici(2 * np.pi * f1 * tau)
@@ -311,58 +319,64 @@ class flicker:
         return y_big[n:]
 
     def generate(self):
-        _generate(self.ybig,
-        self.nsamp,
-        self.krig_bank,
-        self.samp_bank,
-        self.rand_bank,
-        self.nlevels,
-        self.osamp_coeffs,
-        self.krig_ptr,
-        self.samp_ptr,
-        self.hf,
-        self.sigma,
-        self.bw,
-        self.krig_bank_size,
-        self.krig_len,
-        self.STACK,
-        self.STACK_PTR,
-        self.circular_buffer_offsets,)
+        _generate(
+            self.ybig,
+            self.nsamp,
+            self.krig_bank,
+            self.samp_bank,
+            self.rand_bank,
+            self.nlevels,
+            self.osamp_coeffs,
+            self.krig_ptr,
+            self.samp_ptr,
+            self.hf,
+            self.sigma,
+            self.bw,
+            self.krig_bank_size,
+            self.krig_len,
+            self.STACK,
+            self.STACK_PTR,
+            self.circular_buffer_offsets,
+        )
         assert self.STACK_PTR == 0
         self.start_pt += self.nsamp
-        self.STACK[0,0]=self.nlevels-1
-        self.STACK[0,1]=self.start_pt
-@nb.njit(cache=True)
-def cumsum(y,x,start,scale):
-    nn=len(y)
-    y[0] = x[0]*scale + start
-    for i in range(1,nn):
-        y[i]=x[i]*scale+y[i-1]
-    return y
+        self.STACK[0, 0] = self.nlevels - 1
+        self.STACK[0, 1] = self.start_pt
+
 
 @nb.njit(cache=True)
-def cumsum_wnoise(y,x,start,scale1,scale2):
-    nn=len(y)
-    rand=np.random.randn(nn)
-    y[0] = x[0]*scale1 + rand[0]*scale2 + start
-    for i in range(1,nn):
-        y[i]=x[i]*scale1 + rand[i]*scale2 + y[i-1]
+def cumsum(y, x, start, scale):
+    nn = len(y)
+    y[0] = x[0] * scale + start
+    for i in range(1, nn):
+        y[i] = x[i] * scale + y[i - 1]
     return y
+
+
+@nb.njit(cache=True)
+def cumsum_wnoise(y, x, start, scale1, scale2):
+    nn = len(y)
+    rand = np.random.randn(nn)
+    y[0] = x[0] * scale1 + rand[0] * scale2 + start
+    for i in range(1, nn):
+        y[i] = x[i] * scale1 + rand[i] * scale2 + y[i - 1]
+    return y
+
 
 if __name__ == "__main__":
 
-    nlevels=3
+    nlevels = 3
     up = 10
     f2 = 1 / 2
     f1 = 0.993 * f2 / up
     # nsamp=2048*500
-    nsamp=20000
-    
+    nsamp = 20000
+
     clock = flicker(nlevels, nsamp, f1, f2)
     clock.generate()
     # plt.loglog(np.abs(np.fft.rfft(clock.h)))
     # plt.show()
-    plot_spectra(clock.ybig,2000)
+    plot_spectra(clock.ybig, 2000)
     plt.plot(np.cumsum(clock.ybig))
     plt.show()
     plt.plot(clock.ybig)
@@ -383,9 +397,9 @@ if __name__ == "__main__":
     # plt.show()
 
     # clock.generate()
-    csum=np.empty(nsamp,dtype='float64')
-    csum2 = np.cumsum(clock.ybig)*10**(-0.5*nlevels)
-    cumsum(csum,clock.ybig,0,10**(-clock.nlevels/2))
+    csum = np.empty(nsamp, dtype="float64")
+    csum2 = np.cumsum(clock.ybig) * 10 ** (-0.5 * nlevels)
+    cumsum(csum, clock.ybig, 0, 10 ** (-clock.nlevels / 2))
     print(clock.ybig)
     print(csum)
     print(csum2)
@@ -395,4 +409,3 @@ if __name__ == "__main__":
     plt.title(f"CUMSUM of {nlevels} decades, 2M points")
     plt.plot(csum2)
     plt.show()
-
