@@ -39,7 +39,7 @@ delays = np.empty(nspec_per_run * niter, dtype=np.float64)
 # delays2 = np.empty(nsamp*niter,dtype=np.float64)
 # delay = -5.5*np.ones(nsamp)
 delay = np.zeros(nsamp)
-tag = "clock_1overf_5e-9"
+tag = "clock_1overf_1e-10"
 delay[:] = 200.1
 
 
@@ -64,7 +64,7 @@ try:
         re.generate().osamp()
         im.generate().osamp()
         clock.generate()
-        delay = gf.cumsum(csum, clock.ybig, start_delay, 3e-9)
+        delay = gf.cumsum(csum, clock.ybig, start_delay, 1e-10)
         # delay = gf.cumsum_wnoise(csum,clock.ybig,start_delay,3e-20,3e-15) #this adds a random walk contribution. white noise is cumsummed
         start_delay = delay[-1]
         # delays2[ii*nsamp:(ii+1)*nsamp]=delay

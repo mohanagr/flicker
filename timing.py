@@ -38,6 +38,7 @@ def get_AtA_Atd(data, Ag, noise_var, nu, nant, nfreq, ntime):
     two_pi = 2 * np.pi
     Snu2 = np.sum(nu**2) * two_pi**2
     Snu = np.sum(nu) * two_pi
+    print("Snu", Snu, "Snu2", Snu2)
     bs = nant - 1  # block size
     # print("nant", nant, "nbl", nbl, "ntime", ntime, "nfreq", nfreq, "bs", bs)
     # print("d shape", d.shape)
@@ -58,7 +59,92 @@ def get_AtA_Atd(data, Ag, noise_var, nu, nant, nfreq, ntime):
     symmetrize(myAtA)
     return myAtA, myAtd
 
+# def get_AtA_Atd(data, Ag, noise_var, nu, nant, nfreq, ntime):
+#     # data is ntime, nfreq, nbl, C-major
+#     nparam = (nant - 1) * ntime
+#     nbl = (nant - 1) * nant // 2
+#     npertime = nfreq * nbl
+#     myAtA = np.empty((nparam, nparam), dtype="float64")
+#     myAtd = np.empty((nparam,), dtype="float64")
+#     myAtA[:] = 0.0
+#     myAtd[:] = 0.0
+#     two_pi = 2 * np.pi
+#     Snu2 = np.sum(nu**2) * two_pi**2
+#     Snu = np.sum(nu) * two_pi
+#     print("Snu", Snu, "Snu2", Snu2)
+#     bs = nant - 1  # block size
+#     # print("nant", nant, "nbl", nbl, "ntime", ntime, "nfreq", nfreq, "bs", bs)
+#     # print("d shape", d.shape)
+#     # print("n pertime", npertime)
+#     for i in range(ntime):
+#         Agw = Ag / noise_var[i, :][:, None]  # whitened A
+#         myAtA[i * bs : (i + 1) * bs, i * bs : (i + 1) * bs] = Ag.T @ Agw * Snu2
+#         myAtA[i * bs : (i + 1) * bs, ntime * bs :] = Ag.T @ Agw * Snu
+#         # myAtA[ntime * bs :, ntime * bs :] += Ag.T @ Agw * nfreq
+#         for j in range(nfreq):
+#             idx = i * npertime + j * nbl
+#             # print("start idx", idx)
+#             # Aa = Agw*nu[j]
+#             # myAtd[i*bs :(i+1)*bs]+= nu[j]*Agw.T@d[idx:idx+nbl]
+#             vec = Agw.T @ data[i, j, :]
+#             myAtd[i * bs : (i + 1) * bs] += two_pi * nu[j] * vec
+#             # myAtd[-bs:] += vec
+#     symmetrize(myAtA)
+#     return myAtA, myAtd
 
+def get_AtA_Atd_independent(data, Ag, noise_var, nu, nant, nfreq, ntime):
+    # nparam is now 2 * (nant-1) * ntime
+    # Packed as: [tau_t0, tau_t1, ..., tau_tn, phi_t0, phi_t1, ..., phi_tn]
+    bs = nant - 1  
+    nparam = 2 * bs * ntime
+    nbl = (nant - 1) * nant // 2
+    npertime = nfreq * nbl
+    
+    myAtA = np.zeros((nparam, nparam), dtype="float64")
+    myAtd = np.zeros((nparam,), dtype="float64")
+    
+    two_pi = 2 * np.pi
+    Snu2 = np.sum(nu**2) * (two_pi**2)
+    Snu = np.sum(nu) * two_pi
+    
+    # Offsets for the two parameter blocks
+    tau_start = 0
+    phi_start = ntime * bs
+
+    for i in range(ntime):
+        # 1. Compute the antenna-based Gramian for this time slice
+        # noise_var[i, :] is the variance per baseline
+        Agw = Ag / noise_var[i, :][:, None]
+        G = Ag.T @ Agw  # Shape (bs, bs)
+
+        # 2. Determine indices for this specific time block
+        idx_tau = tau_start + i * bs
+        idx_phi = phi_start + i * bs
+
+        # 3. Fill the AtA blocks (Block Diagonal)
+        # Top-left: tau-tau correlation
+        myAtA[idx_tau : idx_tau + bs, idx_tau : idx_tau + bs] = G * Snu2
+        # Bottom-right: phi-phi correlation
+        myAtA[idx_phi : idx_phi + bs, idx_phi : idx_phi + bs] = G * nfreq
+        # Off-diagonals: tau-phi correlation
+        myAtA[idx_tau : idx_tau + bs, idx_phi : idx_phi + bs] = G * Snu
+        myAtA[idx_phi : idx_phi + bs, idx_tau : idx_tau + bs] = G * Snu
+
+        # 4. Fill the Atd (RHS)
+        for j in range(nfreq):
+            # Projection of baseline data onto antenna space
+            vec = Agw.T @ data[i, j, :]
+            
+            # Accumulate into the tau slot (scaled by frequency)
+            myAtd[idx_tau : idx_tau + bs] += (two_pi * nu[j]) * vec
+            # Accumulate into the phi slot
+            myAtd[idx_phi : idx_phi + bs] += vec
+
+    # myAtA is naturally symmetric in this construction, 
+    # but we can call symmetrize for safety if needed
+    # symmetrize(myAtA) 
+    
+    return myAtA, myAtd
 # @nb.njit(parallel=True)
 # def chisq_lm(params,data,B,nu,weights,tau_ref,scale,nant=6):
 #     # data is now for each baseline

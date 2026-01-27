@@ -89,15 +89,25 @@ def lmsolver(
 
 if __name__ == "__main__":
 
-    with np.load("./data/spectra_1830_1840_4096_24000_0.05_clock_1overf_5e-9.npz") as f:
+    # with np.load("./data/spectra_1830_1840_4096_24000_0.05_clock_1overf_5e-9.npz") as f:
+    #     spec1 = f["spectra1"]
+    #     spec2 = f["spectra2"]
+    #     delays = f["delays"]
+    # with np.load("/home/mohan/Downloads/raw_16_0.08.npz") as f:
+    #     new_spec1 = f["spec1"]
+    #     new_spec2 = f["spec2"]
+    #     new_channels = f["channels"]
+
+    with np.load("./data/spectra_1830_1840_4096_24000_0.05_clock_1overf_1e-10.npz") as f:
         spec1 = f["spectra1"]
         spec2 = f["spectra2"]
         delays = f["delays"]
     
-    with np.load("/home/mohan/Downloads/raw_16_0.08.npz") as f:
+    with np.load("/home/mohan/Projects/flicker/data/raw_1e-10_16_0.08.npz") as f:
         new_spec1 = f["spec1"]
         new_spec2 = f["spec2"]
         new_channels = f["channels"]
+
     osamp = 16
     # Global font size settings
     plt.rcParams.update(
@@ -111,58 +121,61 @@ if __name__ == "__main__":
         }
     )
     print("len delays", len(delays))
-    print("len new spec", new_spec1.shape[0])
-
-    avglen = 32768
-    blocksize = avglen
-    st = 0
-    nblocks = spec1.shape[0] // blocksize
-    # nblocks=20
-    print("Num blocks are", nblocks)
-    fit_delta = np.zeros(nblocks, dtype="float64")
-    actual_delta = np.zeros(nblocks, dtype="float64")
-    r_val = np.zeros(nblocks, dtype="float64")
-    for i in range(nblocks):
-        # fft and get a coarse guess
-        ix = st + i * blocksize
-        # print("taking data from ", ix, ix+blocksize)
-        y1 = spec1[ix : ix + blocksize, 4]
-        y2 = spec2[ix : ix + blocksize, 4]
-        xc_small = y1 * np.conj(y2)
-        xc_fft = np.fft.fftshift(np.abs(np.fft.fft(xc_small)))
-        mm = np.argmax(xc_fft)
-        M = len(xc_fft)
-        # print(M)
-        expected_delta = -(mm - M / 2) / M / 1834
-        if np.abs(expected_delta) < 1e-15:
-            expected_delta = 1e-15
-        # print("Starting point", expected_delta)
-        # print(f"Block {i} Expected delta={expected_delta}")
-        alpha = lmsolver(
-            xc_small,
-            expected_delta,
-            1834.1888,
-            lamda=10,
-            ftol=1e-8,
-            xtol=1e-8,
-            niter=100,
-        )
-        fit_delta[i] = alpha
-        # plt.title(f"Block {i}")
-        # plt.plot(delays[ix:ix+blocksize])
-        # plt.show()
-        xx = np.arange(ix, ix + blocksize)
-        yy = delays[ix : ix + blocksize]
-        yymean = np.mean(yy)
-        m, c = np.polyfit(xx, yy, 1)
-        yypred = np.polyval([m, c], xx)
-        SSreg = np.sum((yypred - yymean) ** 2)
-        SStot = np.sum((yy - yymean) ** 2)
-        # print(f"SSreg, SStot for {i}", SSreg,SStot)
-        r_val[i] = np.sqrt(SSreg / SStot)
-        # m,c=np.polyfit(np.arange(0,en-st),delays[st:en]-delays[st],1)
-        # print(f"block {i} slope", m/4096, "pred slope", alpha)
-        actual_delta[i] = m / 4096
+    plt.plot(-delays)
+    plt.show()
+    # print("delay at midpoint is", delays[4096*2])
+    # print("len new spec", new_spec1.shape[0])
+    # sys.exit(0)
+    avglen = 8192
+    # blocksize = avglen
+    # st = 0
+    # nblocks = spec1.shape[0] // blocksize
+    # # nblocks=20
+    # print("Num blocks are", nblocks)
+    # fit_delta = np.zeros(nblocks, dtype="float64")
+    # actual_delta = np.zeros(nblocks, dtype="float64")
+    # r_val = np.zeros(nblocks, dtype="float64")
+    # for i in range(nblocks):
+    #     # fft and get a coarse guess
+    #     ix = st + i * blocksize
+    #     # print("taking data from ", ix, ix+blocksize)
+    #     y1 = spec1[ix : ix + blocksize, 4]
+    #     y2 = spec2[ix : ix + blocksize, 4]
+    #     xc_small = y1 * np.conj(y2)
+    #     xc_fft = np.fft.fftshift(np.abs(np.fft.fft(xc_small)))
+    #     mm = np.argmax(xc_fft)
+    #     M = len(xc_fft)
+    #     # print(M)
+    #     expected_delta = -(mm - M / 2) / M / 1834
+    #     if np.abs(expected_delta) < 1e-15:
+    #         expected_delta = 1e-15
+    #     # print("Starting point", expected_delta)
+    #     # print(f"Block {i} Expected delta={expected_delta}")
+    #     alpha = lmsolver(
+    #         xc_small,
+    #         expected_delta,
+    #         1834.1888,
+    #         lamda=10,
+    #         ftol=1e-8,
+    #         xtol=1e-8,
+    #         niter=100,
+    #     )
+    #     fit_delta[i] = alpha
+    #     # plt.title(f"Block {i}")
+    #     # plt.plot(delays[ix:ix+blocksize])
+    #     # plt.show()
+    #     xx = np.arange(ix, ix + blocksize)
+    #     yy = delays[ix : ix + blocksize]
+    #     yymean = np.mean(yy)
+    #     m, c = np.polyfit(xx, yy, 1)
+    #     yypred = np.polyval([m, c], xx)
+    #     SSreg = np.sum((yypred - yymean) ** 2)
+    #     SStot = np.sum((yy - yymean) ** 2)
+    #     # print(f"SSreg, SStot for {i}", SSreg,SStot)
+    #     r_val[i] = np.sqrt(SSreg / SStot)
+    #     # m,c=np.polyfit(np.arange(0,en-st),delays[st:en]-delays[st],1)
+    #     # print(f"block {i} slope", m/4096, "pred slope", alpha)
+    #     actual_delta[i] = m / 4096
 
     # xc=new_spec1[:,:]*np.conj(new_spec2[:,:])
     # xc_true=xc[:,:]*np.exp(2j*np.pi*new_channels*delays[:osamp*new_spec1.shape[0]:osamp,None]/4096/osamp)
@@ -181,7 +194,8 @@ if __name__ == "__main__":
     blocksize = avglen // osamp
 
     print("new channels are", new_channels / osamp)
-    nblocks = new_spec1.shape[0] // blocksize - 5
+    nblocks = new_spec1.shape[0] // blocksize
+    # nblocks = 300
     print("new blocksize=", blocksize, "nblocks=",nblocks)
     n = np.arange(0, blocksize)
     xc_avg_corrected = np.zeros((nblocks, len(new_channels)), dtype="complex128")
@@ -189,6 +203,13 @@ if __name__ == "__main__":
     slopes = np.zeros(nblocks, dtype="float64")
     ph_noises = np.zeros(nblocks, dtype="float64")
     phases = np.zeros((nblocks, len(new_channels)), dtype="float64")
+    
+    # st = 4 * blocksize
+    true_drift = -delays[st:: blocksize * osamp][: len(slopes)]
+    
+    plt.plot(true_drift)
+    plt.title("true drift")
+    plt.show()
     for i in range(nblocks):
         # fft and get a coarse guess
         ix = st + i * blocksize
@@ -196,42 +217,80 @@ if __name__ == "__main__":
         y2 = new_spec2[ix : ix + blocksize, :]
         xc_small = y1 * np.conj(y2)
         # xc_corrected1 = xc_small * np.exp(2j*np.pi*1834*n*fit_delta[i])
-        xc_corrected1 = xc_small * np.exp(
-            2j * np.pi * new_channels * n[:, None] * fit_delta[i]
-        )
+        # xc_corrected1 = xc_small * np.exp(
+        #     2j * np.pi * new_channels * n[:, None] * fit_delta[i]
+        # )
     
-        xc_avg_corrected[i, :] = np.mean(xc_corrected1, axis=0)
+        # xc_avg_corrected[i, :] = np.mean(xc_corrected1, axis=0)
         xc_avg_uncorrected[i, :] = np.mean(xc_small, axis=0)
-        ph = np.unwrap(np.angle(xc_avg_corrected[i, :]))
+        # ph = np.unwrap(np.angle(xc_avg_corrected[i, :]))
+        ph = np.unwrap(np.angle(xc_avg_uncorrected[i, :]))
         phases[i, :] = ph
         slope, const = np.polyfit(2 * np.pi * new_channels / 4096 / osamp, ph, 1)
         slopes[i] = slope
         ph_noises[i] = np.std(
             ph - (2 * slope * np.pi * new_channels / 4096 / osamp + const)
         )
-    plt.plot(ph_noises)
-    plt.show()
+    # plt.plot(ph_noises)
+    # plt.show()
     nu = new_channels / 4096 / osamp 
     print("nu is", nu)
     nant=2
     nbl = nant*(nant-1)//2
     ntime,nfreq=xc_avg_corrected.shape
+    print("ntime", ntime, "nfreq", nfreq)
     Ag = -timing.get_grammian(nant)
     print(Ag)
     noise_matrix = np.median(ph_noises) * np.ones((ntime,nbl),dtype='float64')
+    phases = np.unwrap(phases,axis=0)
+    phase_diff = np.diff(phases,axis=0)
+    # plt.plot(phase_diff)
+    plt.plot(phases)
+    plt.title("unwrapped along time, mutli chan")
+    plt.show()
     data_matrix = phases.reshape(ntime,nfreq,1)
     print(data_matrix.shape)
-    plt.plot(data_matrix[50,:,0])
-    plt.plot(phases[50,:])
-    plt.show()
+    # plt.plot(data_matrix[50,:,0])
+    # plt.plot(phases[50,:])
+    # plt.show()
+    # AtA,Atd = timing.get_AtA_Atd_independent(data_matrix,Ag,noise_matrix,nu,nant,nfreq,ntime)
     AtA,Atd = timing.get_AtA_Atd(data_matrix,Ag,noise_matrix,nu,nant,nfreq,ntime)
+    s,V=np.linalg.eigh(AtA)
+    print(s)
+    plt.plot(s)
+    plt.title("eigvals of AtA")
+    plt.show()
+
+    # plt.plot(V[:,0])
+    # plt.title("near-singular vector of AtA")
+    # plt.show()
+    print("ratio of directions", V[-1,0]/V[0,0])
     AtA_inv = np.linalg.inv(AtA)
+    # print("last row of AtAinv", AtA_inv[-1,-10,:])
     mfit = AtA_inv@Atd
     mfit=mfit.reshape(-1,nant-1)
     print(mfit.shape)
-    tau_linear = mfit[:-1,:]
+    bs = nant - 1
+    tau_linear = mfit[:ntime * bs,0]
+    phi_linear = mfit[ntime * bs:,0]
+    print("constant phi0 is", phi_linear)
+    pred_phase = 2*np.pi*tau_linear[:,None]*nu[None,:] + phi_linear[0]
+    chisq1 = np.sum((phases-pred_phase)**2)
+    pred_phase = 2*np.pi*(tau_linear[:,None]+20*4)*nu[None,:] + phi_linear[0]-2.81365632*80
+    chisq2 = np.sum((phases-pred_phase)**2)
+    print("chisq1 is", chisq1)
+    print("chisq2 is", chisq2)
+    sys.exit()
+    # plt.plot(tau_linear-tau_linear.mean())
+    # plt.plot(true_drift-true_drift.mean())
+    # plt.show()
+    # plt.plot(phi_linear)
+    # plt.title("per time phi0")
+    plt.title("linear estimate")
     plt.plot(tau_linear)
     plt.show()
+    
+    print(true_drift.shape,tau_linear.shape)
     # TRY DOING CONJUGATE GRADIENT HERE
     # adev = 1e-8
     # noise = np.median(ph_noises)
@@ -257,15 +316,15 @@ if __name__ == "__main__":
     # # plt.axhline(np.mean(auto_avg1[:,0]),label='autos',c='red', lw=3, ls='dashed')
     # plt.legend()
     # # plt.plot(np.abs(average_rows(spec1*np.conj(spec2),nblock=avglen))[:,4])
-    plt.plot(np.abs(xc_avg_uncorrected[:,1]),label='uncorrected')
-    plt.plot(np.abs(xc_avg_corrected[:,1]),label='corrected per-block')
-    # # plt.axhline(np.mean(auto_avg1[:,0]),label='autos',c='red', lw=3, ls='dashed')
-    plt.legend()
-    # # ax=plt.gca()
-    # # ax2=plt.twinx()
-    # # ax2.plot(r_val,label='R value',c='red',alpha=0.5)
-    # # ax2.axhline(0.5,ls='dashed',c='black',lw=3,label='Drift ISNT too linear below')
-    plt.show()
+    # plt.plot(np.abs(xc_avg_uncorrected[:,1]),label='uncorrected')
+    # plt.plot(np.abs(xc_avg_corrected[:,1]),label='corrected per-block')
+    # # # plt.axhline(np.mean(auto_avg1[:,0]),label='autos',c='red', lw=3, ls='dashed')
+    # plt.legend()
+    # # # ax=plt.gca()
+    # # # ax2=plt.twinx()
+    # # # ax2.plot(r_val,label='R value',c='red',alpha=0.5)
+    # # # ax2.axhline(0.5,ls='dashed',c='black',lw=3,label='Drift ISNT too linear below')
+    # plt.show()
     times = np.arange(len(slopes)) * 16e-6 * avglen
     fig = plt.gcf()
     fig.set_size_inches(10, 4)
@@ -285,7 +344,7 @@ if __name__ == "__main__":
     err = maderr
     plt.plot(
         times,
-        -delays[:: blocksize * osamp][: len(slopes)] * 4,
+        true_drift*4,
         label="True drift",
         ls="dashed",
         lw="2",
@@ -302,10 +361,13 @@ if __name__ == "__main__":
         horizontalalignment="right",
     )
     # plt.ylim(-0.5,0.5)
-    plt.ylim(-1000, 2000)
+    # plt.ylim(-1000, 2000)
     plt.xlabel("Time (s)")
     plt.ylabel("Drift (ns)")
     plt.legend(loc=4)
     plt.tight_layout()
     # plt.savefig(f"./images/drift_fitted{mult}_adev.png", dpi=300)
+    plt.show()
+
+    plt.plot(true_drift-tau_linear)
     plt.show()
