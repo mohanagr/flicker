@@ -26,9 +26,11 @@ def get_grammian(nant):
     return Ag
 
 
-def get_AtA_Atd(data, Ag, noise_var, nu, nant, nfreq, ntime):
+def get_AtA_Atd(data, Ag, noise_var, nu, nant, nfreq, ntime, fit_constant=True):
     # data is ntime, nfreq, nbl, C-major
-    nparam = (nant - 1) * ntime + nant - 1
+    nparam = (nant - 1) * ntime
+    if fit_constant:
+        nparam += nant - 1
     nbl = (nant - 1) * nant // 2
     npertime = nfreq * nbl
     myAtA = np.empty((nparam, nparam), dtype="float64")
@@ -46,51 +48,17 @@ def get_AtA_Atd(data, Ag, noise_var, nu, nant, nfreq, ntime):
     for i in range(ntime):
         Agw = Ag / noise_var[i, :][:, None]  # whitened A
         myAtA[i * bs : (i + 1) * bs, i * bs : (i + 1) * bs] = Ag.T @ Agw * Snu2
-        myAtA[i * bs : (i + 1) * bs, ntime * bs :] = Ag.T @ Agw * Snu
-        myAtA[ntime * bs :, ntime * bs :] += Ag.T @ Agw * nfreq
+        if fit_constant:
+            myAtA[i * bs : (i + 1) * bs, ntime * bs :] = Ag.T @ Agw * Snu
+            myAtA[ntime * bs :, ntime * bs :] += Ag.T @ Agw * nfreq
         for j in range(nfreq):
             idx = i * npertime + j * nbl
-            # print("start idx", idx)
-            # Aa = Agw*nu[j]
-            # myAtd[i*bs :(i+1)*bs]+= nu[j]*Agw.T@d[idx:idx+nbl]
             vec = Agw.T @ data[i, j, :]
             myAtd[i * bs : (i + 1) * bs] += two_pi * nu[j] * vec
-            myAtd[-bs:] += vec
+            if fit_constant:
+                myAtd[-bs:] += vec
     symmetrize(myAtA)
     return myAtA, myAtd
-
-# def get_AtA_Atd(data, Ag, noise_var, nu, nant, nfreq, ntime):
-#     # data is ntime, nfreq, nbl, C-major
-#     nparam = (nant - 1) * ntime
-#     nbl = (nant - 1) * nant // 2
-#     npertime = nfreq * nbl
-#     myAtA = np.empty((nparam, nparam), dtype="float64")
-#     myAtd = np.empty((nparam,), dtype="float64")
-#     myAtA[:] = 0.0
-#     myAtd[:] = 0.0
-#     two_pi = 2 * np.pi
-#     Snu2 = np.sum(nu**2) * two_pi**2
-#     Snu = np.sum(nu) * two_pi
-#     print("Snu", Snu, "Snu2", Snu2)
-#     bs = nant - 1  # block size
-#     # print("nant", nant, "nbl", nbl, "ntime", ntime, "nfreq", nfreq, "bs", bs)
-#     # print("d shape", d.shape)
-#     # print("n pertime", npertime)
-#     for i in range(ntime):
-#         Agw = Ag / noise_var[i, :][:, None]  # whitened A
-#         myAtA[i * bs : (i + 1) * bs, i * bs : (i + 1) * bs] = Ag.T @ Agw * Snu2
-#         myAtA[i * bs : (i + 1) * bs, ntime * bs :] = Ag.T @ Agw * Snu
-#         # myAtA[ntime * bs :, ntime * bs :] += Ag.T @ Agw * nfreq
-#         for j in range(nfreq):
-#             idx = i * npertime + j * nbl
-#             # print("start idx", idx)
-#             # Aa = Agw*nu[j]
-#             # myAtd[i*bs :(i+1)*bs]+= nu[j]*Agw.T@d[idx:idx+nbl]
-#             vec = Agw.T @ data[i, j, :]
-#             myAtd[i * bs : (i + 1) * bs] += two_pi * nu[j] * vec
-#             # myAtd[-bs:] += vec
-#     symmetrize(myAtA)
-#     return myAtA, myAtd
 
 def get_AtA_Atd_independent(data, Ag, noise_var, nu, nant, nfreq, ntime):
     # nparam is now 2 * (nant-1) * ntime
