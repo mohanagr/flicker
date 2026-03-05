@@ -90,24 +90,24 @@ def lmsolver(
 
 if __name__ == "__main__":
 
-    with np.load("./data/spectra_1830_1840_4096_24000_0.05_clock_1overf_5e-9.npz") as f:
-        spec1 = f["spectra1"]
-        spec2 = f["spectra2"]
-        delays = f["delays"]
-    with np.load("/home/mohan/Downloads/raw_16_0.08.npz") as f:
-        new_spec1 = f["spec1"]
-        new_spec2 = f["spec2"]
-        new_channels = f["channels"]
-
-    # with np.load("./data/spectra_1830_1840_4096_24000_0.05_clock_1overf_1e-10.npz") as f:
+    # with np.load("./data/spectra_1830_1840_4096_24000_0.05_clock_1overf_5e-9.npz") as f:
     #     spec1 = f["spectra1"]
     #     spec2 = f["spectra2"]
     #     delays = f["delays"]
-    
-    # with np.load("/home/mohan/Projects/flicker/data/raw_1e-10_16_0.08.npz") as f:
+    # with np.load("/home/mohan/Downloads/raw_16_0.08.npz") as f:
     #     new_spec1 = f["spec1"]
     #     new_spec2 = f["spec2"]
     #     new_channels = f["channels"]
+
+    with np.load("./data/spectra_1830_1840_4096_24000_0.05_clock_1overf_1e-10.npz") as f:
+        spec1 = f["spectra1"]
+        spec2 = f["spectra2"]
+        delays = f["delays"]
+    
+    with np.load("/home/mohan/Projects/flicker/data/raw_1e-10_16_0.08.npz") as f:
+        new_spec1 = f["spec1"]
+        new_spec2 = f["spec2"]
+        new_channels = f["channels"]
 
     osamp = 16
     # Global font size settings
@@ -121,12 +121,10 @@ if __name__ == "__main__":
             "figure.titlesize": 22,
         }
     )
-
-    # print("delay at midpoint is", delays[4096*2])
-    # print("len new spec", new_spec1.shape[0])
-    # sys.exit(0)
-    # st = 0
-    avglen = 4096
+    
+    avglen = 16384
+    plt.plot(delays[::avglen]*4)
+    plt.show()
     # blocksize = avglen
     # # st = 0
     # nblocks = spec1.shape[0] // blocksize
@@ -190,13 +188,13 @@ if __name__ == "__main__":
     # plt.show()
     # sys.exit()
 
-    st = 250
+    st = 100
     blocksize = avglen // osamp
-
+    block_dt = blocksize * 4096 / 250e6 * osamp
     print("new channels are", new_channels / osamp)
-    nblocks = new_spec1.shape[0] // blocksize
-    print("new blocksize=", blocksize, "total nblocks=",nblocks)
-    nblocks = 90
+    nblocks = new_spec1.shape[0] // blocksize - st
+    # print("new blocksize=", blocksize, "total nblocks=",nblocks)
+    # nblocks = 90
     n = np.arange(0, blocksize)
     xc_avg_corrected = np.zeros((nblocks, len(new_channels)), dtype="complex128")
     xc_avg_uncorrected = np.zeros((nblocks, len(new_channels)), dtype="complex128")
@@ -204,15 +202,17 @@ if __name__ == "__main__":
     ph_noises = np.zeros(nblocks, dtype="float64")
     phases = np.zeros((nblocks, len(new_channels)), dtype="float64")
     phase_res = np.zeros((nblocks, len(new_channels)), dtype="float64")
-    
+    print("blocksize * osamp", blocksize*osamp, avglen)
     # st = 4 * blocksize
     true_drift = -delays[st*blocksize*osamp:: blocksize * osamp][: len(slopes)]
     
-    plt.plot(true_drift)
-    plt.title("true drift")
-    plt.ylabel("drift (units of ADC samples)")
-    plt.xlabel("averaged block number")
+    plt.plot(np.arange(nblocks)*block_dt, true_drift*4)
+    plt.title("True drift")
+    plt.ylabel("drift (ns)")
+    plt.xlabel("Time (s)")
+    plt.tight_layout()
     plt.show()
+
     for i in range(nblocks):
         # fft and get a coarse guess
         ix = st * blocksize + i * blocksize
@@ -244,7 +244,16 @@ if __name__ == "__main__":
     # nu = np.arange(1830*osamp,1840*osamp)/4096/osamp
     
     print(nu)
-    
+
+    plt.title("METEOR M2-4 clock drift phase", fontsize=18)
+    extent = [nu[0]*250,nu[-1]*250, nblocks*block_dt, 0]
+    plt.imshow(np.angle(xc_avg_uncorrected),aspect='auto',cmap='RdBu',interpolation='None',extent=extent)
+    plt.colorbar()
+    plt.xlabel("Freq (MHz)")
+    plt.ylabel("Time (s)")
+    plt.tight_layout()
+    plt.show()
+
     nant=2
     nbl = nant*(nant-1)//2
     ntime,nfreq=xc_avg_corrected.shape
@@ -271,12 +280,6 @@ if __name__ == "__main__":
     # plt.show()
     # unp_phases[:,:]-=unp_phases[0,0]
 
-    
-    plt.title("a few phases across freq")
-    plt.plot(unp_phases[:5,:].T)
-    plt.ylabel("rad")
-    plt.xlabel("freq bins")
-    plt.show()
     data_matrix = unp_phases.reshape(ntime,nfreq,nbl)
     # data_matrix = np.random.randn(ntime*nfreq*nbl).reshape(ntime,nfreq,nbl)
     print(data_matrix.shape)
@@ -284,7 +287,7 @@ if __name__ == "__main__":
     # plt.plot(phases[50,:])
     # plt.show()
     # AtA,Atd = timing.get_AtA_Atd_independent(data_matrix,Ag,noise_matrix,nu,nant,nfreq,ntime)
-    AtA,Atd = timing.get_AtA_Atd(data_matrix,Ag,noise_matrix,nu-nu[0],nant,nfreq,ntime, fit_constant=False)
+    AtA,Atd = timing.get_AtA_Atd(data_matrix,Ag,noise_matrix,nu,nant,nfreq,ntime, fit_constant=False)
     s,V=np.linalg.eigh(AtA)
     # print(s)
     plt.semilogy(s, marker='o',ls='')
@@ -328,18 +331,25 @@ if __name__ == "__main__":
     # plt.show()
     # plt.plot(phi_linear)
     # plt.title("per time phi0")
-    plt.title("linear estimate, NO centering")
-    plt.plot(tau_linear, label="linear estimate")
-    plt.plot(true_drift, label="True drift")
-    plt.ylabel("ADC samples")
-    plt.xlabel("block num")
-    plt.legend()
-    plt.show()
-
-    plt.title("residual")
-    plt.plot(true_drift-tau_linear, label="linear estimate")
-    plt.ylabel("ADC samples")
-    plt.xlabel("block num")
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+    fig.subplots_adjust(hspace=0.05) # Reduce space between plots
+    # --- Top Plot: Data and Fit ---
+    ax1.plot(np.arange(len(tau_linear)) * block_dt, tau_linear * 4, label="Fit drift")
+    ax1.plot(np.arange(len(tau_linear)) * block_dt, true_drift * 4, label="True drift")
+    ax1.set_ylabel("Drift (ns)")
+    ax1.set_title(r"$\phi(\nu,t) = 2 \pi \nu \tau (t)$")
+    ax1.legend()
+    ax1.grid(True, linestyle='--', alpha=0.6)
+    # --- Bottom Plot: Residuals ---
+    residuals = (true_drift - tau_linear) * 4 # Multiplying by 4 to match units
+    res_mean = np.mean(residuals)
+    ax2.plot(np.arange(len(tau_linear)) * block_dt, residuals, color='gray')
+    ax2.axhline(res_mean, color='black',ls='dashed', label=f'Mean {res_mean:4.2f} ns',lw=2)
+    ax2.set_ylabel("Resid. (ns)")
+    ax2.set_xlabel("Time (s)")
+    plt.legend(loc=4,fontsize=12)
+    ax2.grid(True, linestyle='--', alpha=0.6)
+    plt.tight_layout()
     plt.show()
 
     print("stats", np.mean(true_drift-tau_linear), np.std(true_drift-tau_linear))
@@ -441,20 +451,26 @@ if __name__ == "__main__":
     # plt.savefig(f"./images/drift_fitted{mult}_adev.png", dpi=300)
     plt.show()
 
-    tau=tau_linear-tau_linear[0] #ref it to first block
+    # tau=tau_linear-tau_linear[0] #ref it to first block
+    tau=tau_linear
     pred_phase1 = 2*np.pi*tau[:,None]*nu[None,:]
     xc_avg_corrected = xc_avg_uncorrected * np.exp(
             -1j * pred_phase1
         )
     
-    plt.plot(np.unwrap(np.unwrap(np.angle(xc_avg_corrected),axis=1),axis=0))
-    plt.show()
+    # plt.plot(np.unwrap(np.unwrap(np.angle(xc_avg_corrected),axis=1),axis=0))
+    # plt.show()
 
     xc_avg_full = np.mean(xc_avg_corrected,axis=0)
     y = np.unwrap(np.angle(xc_avg_full))
     m, c = np.polyfit(2 * np.pi * new_channels / 4096 / osamp,y , 1)
+    m=4*m
+    print("avg phase slope (ns)", m, c)
     res_new = y - (2 * np.pi * new_channels / 4096 / osamp * m + c)
     print("New phase res", np.std(res_new))
+    df = 250e6/4096/osamp
+    sigma_tau = np.std(res_new) * np.sqrt(12/(nfreq*(nfreq**2-1)))/(2*np.pi*df)/1e-9
+    print("expected error from slope fit (ns)", sigma_tau)
     print("total bandwidth = ", len(nu)/osamp, "in units of original channels")
     print("sinc expected to take ", 4096*osamp/(len(nu)), "original samples")
     samples = np.linspace(-2100,2100,100001)
@@ -465,8 +481,6 @@ if __name__ == "__main__":
 
     carrier_period = 1/np.mean(nu)
 
-    drift_error = true_drift-tau_linear
-    print("err stats", drift_error.mean(), drift_error.std())
     # plt.plot(true_drift-tau_linear)
     # plt.axhline(carrier_period)
     # plt.axhline(2*carrier_period)
@@ -479,9 +493,25 @@ if __name__ == "__main__":
     dnu = 1/osamp
     for fi,f in enumerate(nu):
         tdcorr+=np.abs(xc_avg_full[fi])*np.exp(2j*np.pi*f*samples + 1j*np.angle(xc_avg_full[fi]))
-    
-    print("peak of tdcorr at", (np.argmax(np.real(tdcorr))-len(tdcorr)//2)*(samples[1]-samples[0]))
-    plt.plot(samples,np.real(tdcorr))
-    plt.xlim(-20,20)
+    print("sinc expected to take ", 4096*osamp/(len(nu)), "original samples")
+    print("Time-domain corr.", (np.argmax(np.real(tdcorr))-len(tdcorr)//2)*(samples[1]-samples[0]))
+    dsamp = (samples[1]-samples[0])
+    argmax = np.argmax(np.real(tdcorr))
+    # --- Setup the main figure ---
+    fig, ax = plt.subplots(figsize=(12, 5))
+    # Plot the full signal (Sinc envelope)
+    # Assuming tdcorr and samples are already defined from your code
+    x_center = (np.argmax(np.real(tdcorr))-len(tdcorr)//2)*(samples[1]-samples[0])*4
+    ax.plot(samples*4, np.real(tdcorr), label="Time Domain Correlation", color='C0', lw=1)
+    ax.axvline(m,ls='dotted', label=f'Line fit slope {m:4.2f} ns',c='black',lw=2)
+    ax.axvline(x_center,ls='dashed', label=f'nominal argmax {x_center:4.2f} ns',c='green',lw=2)
+    ax.set_xlabel("Delay (ns)")
+    ax.set_ylabel("Amplitude")
+    ax.set_title(r"Narrow-band correlation $sinc(\Delta \nu (\tau-\tau_0))cos(2 \pi \nu_c (\tau-\tau_0))$")
+    ax.set_xlim(m-5*sigma_tau, m+5*sigma_tau)
+    plt.axvspan(m-3*sigma_tau, m+3*sigma_tau, color='gray', alpha=0.3, label=f"3 $\sigma$ uncertainty {3*sigma_tau:4.2f} ns")
+    ax.grid(True, linestyle='--', alpha=0.5)
+    plt.legend(loc=4,fontsize=12)
+    plt.tight_layout()
     plt.show()
 
