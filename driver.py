@@ -5,6 +5,7 @@ import pfb
 from matplotlib import pyplot as plt
 import time
 import numba as nb
+import datetime
 
 np.random.seed(42)
 
@@ -22,9 +23,14 @@ nsamp = 2048 * 1000
 obj1 = pfb.StreamingPFB(tsize=nsamp)
 obj2 = pfb.StreamingPFB(tsize=nsamp)
 start_delay = 0
-zero_delay = np.zeros(nsamp, dtype=np.float64)
+
 t_orig = np.arange(nsamp, dtype=np.float64)
 t_new = np.empty(nsamp, dtype=np.float64)
+bufsize = 10*4096 #how many samples
+t_buf = np.hstack([np.arange(-bufsize,0), t_orig])
+Ibuf = np.zeros(nsamp + bufsize, dtype=np.float64)
+Qbuf = np.zeros(nsamp + bufsize, dtype=np.float64)
+
 ybig = np.empty(nsamp, dtype="float64")
 ybig2 = np.empty(nsamp, dtype="float64")
 csum = np.empty(nsamp, dtype="float64")
@@ -39,9 +45,6 @@ delays = np.empty(nspec_per_run * niter, dtype=np.float64)
 # delays2 = np.empty(nsamp*niter,dtype=np.float64)
 # delay = -5.5*np.ones(nsamp)
 delay = np.zeros(nsamp)
-tag = "clock_1overf_1e-10"
-delay[:] = 200.1
-
 
 @nb.njit(parallel=True, cache=True)
 def apply_drift_delay(delay, t_new, t_orig, slope, offset):
@@ -50,26 +53,37 @@ def apply_drift_delay(delay, t_new, t_orig, slope, offset):
         delay[i] = slope * t_orig[i] + offset
         t_new[i] = t_orig[i] + delay[i]
 
-
+scale = 1e-10
+time_tag = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 sigma = 0.05
 
 # this is if you want to do a constant drift instead of noise
-offset = 0
+offset = 5*4096 + 200
 slope = 5 / 20e3 / 4096  # sample drift per 20k spectra
 #############################################################
+write_data = True
 
 try:
     for ii in range(niter):
+        
+        block_num = ii
+        block_len = nsamp
+
         t1 = time.time()
         re.generate().osamp()
         im.generate().osamp()
         clock.generate()
-        delay = gf.cumsum(csum, clock.ybig, start_delay, 1e-10)
-        # delay = gf.cumsum_wnoise(csum,clock.ybig,start_delay,3e-20,3e-15) #this adds a random walk contribution. white noise is cumsummed
+        
+        delay = gf.cumsum(csum, clock.ybig, start_delay, scale)
+        # print("len I is", len(re.ybig))
+        # print("len Q is", len(im.ybig))
+        # delay =  gf.cumsum_wnoise(csum,clock.ybig,start_delay,3e-20,3e-15) #this adds a random walk contribution. white noise is cumsummed
         start_delay = delay[-1]
         # delays2[ii*nsamp:(ii+1)*nsamp]=delay
         # print("first val of clock drift is", clock.ybig[0])
-        gn.get_delay(t_new, t_orig, delay)
+        gn.get_delay(t_new, t_orig, delay, offset)
+
+        # print("t_new", t_new)
         # offset=ii*nsamp*slope
         # apply_drift_delay(delay,t_new,t_orig,slope,offset)
         # plt.plot(t_new-t_orig)
@@ -77,14 +91,22 @@ try:
         # plt.show()
         carrier = 0.4478  # this is now for the oversampled one, 1835/4096
 
-        I = re.ybig
-        Q = im.ybig
+        Ibuf[bufsize:] = re.ybig #first put new stuff in the buffer
+        Qbuf[bufsize:] = im.ybig
         gn.upconvert_delay_noise(
-            ybig, I, Q, t_orig, carrier, sigma
-        )  # last argument is sigma of noise you wanna add
-        I = gn.cubic_spline(t_new, t_orig, re.ybig)
-        Q = gn.cubic_spline(t_new, t_orig, im.ybig)
-        gn.upconvert_delay_noise(ybig2, I, Q, t_new, carrier, sigma)
+            ybig, Ibuf[bufsize:], Qbuf[bufsize:], t_orig, carrier, block_num, block_len, sigma
+        )  # last argument is sigma of noise you wanna add. upconvert new stuff
+        # tt1=time.time()
+        # print(len(t_buf), len(Ibuf))
+        # plt.plot(t_buf)
+        # plt.show()
+        I2 = gn.cubic_spline(t_new, t_buf, Ibuf) #generate new delayed stuff using full buffer
+        Q2 = gn.cubic_spline(t_new, t_buf, Qbuf)
+        # tt2=time.time()
+        # print("spline",tt2-tt1)
+        gn.upconvert_delay_noise(ybig2, I2, Q2, t_new, carrier, block_num, block_len, sigma) #upconvert delayed stuff
+        Ibuf[:bufsize] = Ibuf[-bufsize:]
+        Qbuf[:bufsize] = Qbuf[-bufsize:] #rotate buffers to ensure time continuity
         obj1.pfb(ybig)
         obj2.pfb(ybig2)
         # save data
@@ -112,9 +134,10 @@ try:
 except Exception as e:
     pass
 finally:
-    np.savez(
-        f"./data/spectra_{start_chan}_{start_chan+nchans}_{lblock}_{ii+1}_{sigma}_{tag}.npz",
-        spectra1=spectra1,
-        spectra2=spectra2,
-        delays=delays,
-    )
+    if write_data:
+        np.savez(
+            f"./data/spectra_{start_chan}_{start_chan+nchans}_{lblock}_{ii+1}_{sigma}_{scale:.2e}_{time_tag}.npz",
+            spectra1=spectra1,
+            spectra2=spectra2,
+            delays=delays,
+        )

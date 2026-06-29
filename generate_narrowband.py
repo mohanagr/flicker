@@ -193,22 +193,24 @@ def cubic_spline(xnew, x, y, out=None):
 
 
 @nb.njit(parallel=True, cache=True)
-def upconvert_delay_noise(y, I, Q, t, freq, sigma):
+def upconvert_delay_noise(y, I, Q, t, freq, block_num, block_len, sigma):
     nn = len(y)
+    omega = 2 * np.pi * freq
+    phi0 = ((omega * block_num)%(2*np.pi) * (omega * block_len)%(2*np.pi))%(2*np.pi)
     noise = np.random.randn(nn)
     for i in nb.prange(nn):
+        phi = omega*t[i] + phi0 #no need to mod 2 pi again bc t[i] ~ few million, not too big for float64
         y[i] = (
-            I[i] * np.cos(2 * np.pi * freq * t[i])
-            - Q[i] * np.sin(2 * np.pi * freq * t[i])
+            I[i] * np.cos(phi)
+            - Q[i] * np.sin(phi)
             + sigma * noise[i]
         )
 
-
 @nb.njit(parallel=True, cache=True)
-def get_delay(tnew, told, delay):
+def get_delay(tnew, told, delay, offset):
     nn = len(tnew)
     for i in nb.prange(nn):
-        tnew[i] = told[i] + delay[i]
+        tnew[i] = told[i] - delay[i] - offset
 
 
 if __name__ == "__main__":
