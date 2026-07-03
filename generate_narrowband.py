@@ -101,7 +101,7 @@ class narrowband:
         fir = self.get_impulse(
             delta, coeffs
         )  # size of krig coeffs can be different, don't matter.
-
+        # plt.plot(fir); plt.title(f"FIR IR df={df}");plt.show()
         self.hf = np.fft.rfft(
             np.hstack([fir, np.zeros(self.krig_bank_size)])
         )  # krig transfer function
